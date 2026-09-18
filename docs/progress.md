@@ -57,6 +57,32 @@ $$
 
 `tests/test_forward.py` covers synthetic recovery of the forward price and discount factor, plus invalid array shapes, lengths, values, and strikes.
 
+## `src/options_chain.py`
+
+### Implemented
+
+- `calculate_mid_price(bid, ask)` calculates the midpoint between bid and ask prices.
+- `calculate_time_to_expiry(quote_date, expiry_date)` calculates time to expiry in years using the ACT/365 convention.
+- Both functions support scalar values and NumPy/pandas-friendly inputs where natural.
+
+### Mathematical logic
+
+The mid price is the average of the bid and ask:
+
+$$
+M = \frac{\mathrm{bid} + \mathrm{ask}}{2}.
+$$
+
+Using ACT/365, time to expiry is the actual number of calendar days between the quote and expiry dates divided by 365:
+
+$$
+\tau = \frac{\mathrm{expiry\ date} - \mathrm{quote\ date}}{365}.
+$$
+
+### Tests
+
+`tests/test_options_chain.py` covers scalar and array mid-price calculations, plus scalar and pandas Series time-to-expiry calculations.
+
 ## `src/implied_vol.py`
 
 ### Implemented
