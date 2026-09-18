@@ -1,0 +1,121 @@
+# Project progress
+
+## `src/pricing.py`
+
+### Implemented
+
+- `black_scholes_call_price(...)` prices a European call using the Black formula.
+- `black_scholes_put_price(...)` prices the corresponding European put.
+- Inputs are converted to finite, strictly positive NumPy values.
+
+### Mathematical logic
+
+For a forward price $F$, strike $K$, discount factor $D$, time to expiry $\tau = T-t$, and volatility $\sigma$:
+
+$$
+d_1 = \frac{\ln(F/K) + \frac{1}{2}\sigma^2\tau}{\sigma\sqrt{\tau}},
+\qquad
+d_2 = d_1 - \sigma\sqrt{\tau}.
+$$
+
+The call and put prices are:
+
+$$
+C = D\left(FN(d_1) - KN(d_2)\right),
+\qquad
+P = D\left(KN(-d_2) - FN(-d_1)\right).
+$$
+
+### Tests
+
+`tests/test_pricing.py` covers call-put parity, call-price monotonicity with respect to strike, and rejection of non-positive or non-finite inputs.
+
+## `src/forward.py`
+
+### Implemented
+
+- `infer_forward_and_discount_factor(...)` fits call-minus-put values against strikes to infer the forward price and discount factor.
+- Inputs must be one-dimensional, finite, aligned arrays with at least two distinct positive strikes.
+
+### Mathematical logic
+
+For matched European call and put prices under forward pricing:
+
+$$
+C - P = D(F - K) = DF - DK.
+$$
+
+Therefore, fitting $C-P$ as a linear function of strike gives a slope of $-D$ and an intercept of $DF$. The implementation recovers:
+
+$$
+D = -\text{slope},
+\qquad
+F = \frac{\text{intercept}}{D}.
+$$
+
+### Tests
+
+`tests/test_forward.py` covers synthetic recovery of the forward price and discount factor, plus invalid array shapes, lengths, values, and strikes.
+
+## `src/implied_vol.py`
+
+### Implemented
+
+- `implied_volatility_call(...)` solves for call implied volatility using `scipy.optimize.brentq`.
+- The solver starts with an upper volatility of $5$, doubles it while the Black call price remains below the market price, and stops at the current safety cap of $20$.
+
+### Mathematical logic
+
+The solver defines:
+
+$$
+f(\sigma)
+=
+C_{\mathrm{BS}}(\sigma)
+-
+C_{\mathrm{market}}.
+$$
+
+The Black call price is strictly increasing in volatility, so $f(\sigma)$
+is also increasing. The solver begins with the bracket
+
+$$
+\sigma_{\mathrm{lower}} = 10^{-8},
+\qquad
+\sigma_{\mathrm{upper}} = 5.
+$$
+
+If $f(\sigma_{\mathrm{upper}}) < 0$, the model price is still below the
+market price, so the required implied volatility must be higher. The upper
+bound is therefore doubled until $f(\sigma_{\mathrm{upper}}) \geq 0$ or the
+safety cap of $20$ is reached.
+
+Once the objective has opposite signs at the two bounds, Brent's method
+solves
+
+$$
+f(\sigma)=0.
+$$
+
+### Tests
+
+`tests/test_implied_vol.py` covers synthetic implied-volatility recovery at volatilities $0.25$ and $8.0$. The higher-volatility case exercises the upper-bound growth.
+
+## Test suite
+
+The current test suite covers:
+
+- Black call and put pricing.
+- Put-call parity and pricing input validation.
+- Synthetic forward and discount-factor recovery.
+- Call implied-volatility recovery and adaptive bracketing.
+
+Run the suite with:
+
+```bash
+pytest
+```
+
+## Project configuration
+
+- `pytest.ini` configures the project root on the pytest import path.
