@@ -2,7 +2,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.options_chain import calculate_mid_price, calculate_time_to_expiry
+from src.options_chain import (
+    calculate_mid_price,
+    calculate_time_to_expiry,
+    match_calls_and_puts,
+)
 from helper import synthetic_option_chain
 
 
@@ -48,3 +52,37 @@ def test_synthetic_option_chain_helper():
         option_chain["bid"],
         option_chain["ask"],
     )
+
+
+def test_match_calls_and_puts():
+    option_chain = synthetic_option_chain()
+
+    matched = match_calls_and_puts(option_chain)
+
+    assert len(matched) == 5
+    assert list(matched.columns) == [
+        "quote_date",
+        "expiry_date",
+        "strike",
+        "call_mid",
+        "put_mid",
+    ]
+    np.testing.assert_array_equal(
+        matched["strike"],
+        np.array([80.0, 90.0, 100.0, 110.0, 120.0]),
+    )
+
+
+def test_match_calls_and_puts_excludes_unmatched_strikes():
+    option_chain = synthetic_option_chain()
+    option_chain = option_chain.loc[
+        ~(
+            (option_chain["option_type"] == "put")
+            & (option_chain["strike"] == 110.0)
+        )
+    ]
+
+    matched = match_calls_and_puts(option_chain)
+
+    assert len(matched) == 4
+    assert 110.0 not in matched["strike"].values
