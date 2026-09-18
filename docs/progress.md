@@ -80,16 +80,19 @@ $$
 \tau = \frac{\mathrm{expiry\ date} - \mathrm{quote\ date}}{365}.
 $$
 
-For put-call parity analysis, the matching function retains only strikes with
-both a call and a put:
+The matching function prepares aligned call and put prices for downstream
+forward and discount-factor inference. It transforms raw quote rows such as:
 
-$$
-(\text{quote date},\ \text{expiry date},\ \text{strike})
-\longrightarrow
-(\text{call\_mid},\ \text{put\_mid}).
-$$
+| quote_date | expiry_date | strike | option_type | bid | ask |
+| --- | --- | ---: | --- | ---: | ---: |
+| 2026-01-01 | 2026-07-01 | 80 | call | ... | ... |
+| 2026-01-01 | 2026-07-01 | 80 | put | ... | ... |
 
-The inner join excludes incomplete call-put pairs.
+into one row per matched strike:
+
+| quote_date | expiry_date | strike | call_mid | put_mid |
+| --- | --- | ---: | ---: | ---: |
+| 2026-01-01 | 2026-07-01 | 80 | ... | ... |
 
 ### Tests
 
