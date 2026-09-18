@@ -28,3 +28,29 @@ def test_implied_volatility_call():
     )
 
     assert implied_volatility == pytest.approx(volatility)
+
+
+def test_implied_volatility_expands_upper_bound():
+    forward = 100.0
+    strike = 110.0
+    discount_factor = 0.98
+    time_to_expiry = 0.5
+    volatility = 8.0
+
+    market_price = black_scholes_call_price(
+        forward,
+        strike,
+        discount_factor,
+        time_to_expiry,
+        volatility,
+    )
+
+    implied_volatility = implied_volatility_call(
+        market_price,
+        forward,
+        strike,
+        discount_factor,
+        time_to_expiry,
+    )
+
+    assert implied_volatility == pytest.approx(volatility)
