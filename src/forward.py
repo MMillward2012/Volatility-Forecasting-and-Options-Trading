@@ -20,6 +20,8 @@ def infer_forward_and_discount_factor(call_prices, put_prices, strikes):
         raise ValueError("call_prices must contain only finite values")
     if not np.all(np.isfinite(put_prices)):
         raise ValueError("put_prices must contain only finite values")
+    if np.any(call_prices < 0) or np.any(put_prices < 0):
+        raise ValueError("call_prices and put_prices must be non-negative")
     if not np.all(np.isfinite(strikes)):
         raise ValueError("strikes must contain only finite values")
     if not np.all(strikes > 0):
@@ -30,6 +32,11 @@ def infer_forward_and_discount_factor(call_prices, put_prices, strikes):
     slope, intercept = np.polyfit(strikes, parity_values, 1)
 
     discount_factor = -slope
+    if not np.isfinite(discount_factor) or discount_factor <= 0:
+        raise ValueError("inferred discount_factor must be finite and positive")
+
     forward = intercept / discount_factor
+    if not np.isfinite(forward) or forward <= 0:
+        raise ValueError("inferred forward must be finite and positive")
 
     return forward, discount_factor

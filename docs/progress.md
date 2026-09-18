@@ -36,6 +36,7 @@ $$
 
 - `infer_forward_and_discount_factor(...)` fits call-minus-put values against strikes to infer the forward price and discount factor.
 - Inputs must be one-dimensional, finite, aligned arrays with at least two distinct positive strikes.
+- Call and put prices must be non-negative. The fitted discount factor and forward must be finite and strictly positive; discount factors above one are allowed.
 
 ### Mathematical logic
 
@@ -55,7 +56,7 @@ $$
 
 ### Tests
 
-`tests/test_forward.py` covers synthetic recovery of the forward price and discount factor, plus invalid array shapes, lengths, values, and strikes.
+`tests/test_forward.py` covers synthetic recovery (including discount factors above one), zero prices, invalid input lengths and strikes, non-finite or negative prices, and invalid fitted results.
 
 ## `src/options_chain.py`
 
@@ -89,9 +90,20 @@ $$
 
 - `implied_volatility_call(...)` solves for call implied volatility using `scipy.optimize.brentq`.
 - `implied_volatility_put(...)` solves for put implied volatility using the same approach.
+- Both solvers validate finite market prices against Black price bounds and return zero volatility at discounted intrinsic value.
 - Each solver starts with an upper volatility of $5$, doubles it while the relevant Black option price remains below the market price, and stops at the current safety cap of $20$.
 
 ### Mathematical logic
+
+For positive forward, strike, discount factor, and time to expiry, accepted market prices satisfy:
+
+$$
+D\max(F-K,0) \leq C_{\mathrm{market}} < DF,
+\qquad
+D\max(K-F,0) \leq P_{\mathrm{market}} < DK.
+$$
+
+Equality at the lower price bound returns $\sigma=0$ directly. Equality at the upper price bound is rejected because no finite volatility reaches it. Model inputs are validated even when returning zero volatility.
 
 For calls, the solver defines:
 
@@ -127,6 +139,8 @@ market price, so the required implied volatility must be higher. The upper
 bound is therefore doubled until $f(\sigma_{\mathrm{upper}}) \geq 0$ or the
 safety cap of $20$ is reached.
 
+Failure to bracket by $20$ raises an error. Positive implied volatilities below the numerical lower bound of $10^{-8}$ are outside the supported search interval.
+
 Once the objective has opposite signs at the two bounds, Brent's method
 solves
 
@@ -136,7 +150,40 @@ $$
 
 ### Tests
 
-`tests/test_implied_vol.py` covers synthetic call and put implied-volatility recovery at volatilities $0.25$ and $8.0$. The higher-volatility cases exercise upper-bound growth, and additional tests verify that both solvers raise an error when the root cannot be bracketed below the safety cap.
+`tests/test_implied_vol.py` covers call and put recovery at $0.25$, $8$, and the cap of $20$; rejection of valid prices generated at $\sigma=30$ with $\tau=0.01$; invalid market prices; zero-volatility returns at intrinsic value; and model input validation.
+
+## `src/data_cleaning.py`
+
+### Implemented
+
+- `clean_option_data(...)` converts OptionMetrics rows to the project schema.
+- The script entry point filters `am_settlement == 0` before cleaning and saves the processed CSV.
+- Dates, strikes, option types, quote metrics, and expiry-day flags are prepared as described in [Data](data.md).
+
+### Mathematical logic
+
+Strike is divided by $1000$. Spread is ask minus bid; relative spread is spread divided by midpoint, with zero midpoints producing `NaN`. Remaining calendar days are divided by $365$, and `is_expiry_day` identifies zero remaining days.
+
+### Tests
+
+The current SPX file has been checked through cleaning and matching. There are no dedicated automated cleaning tests yet.
+
+## `src/option_matching.py`
+
+### Implemented
+
+- `match_calls_and_puts(...)` inner-joins calls and puts on `security_id`, `quote_date`, `expiry_date`, and `strike`.
+- Missing matching keys and duplicate keys within either side raise errors; unmatched rows are excluded.
+- Contract identifiers, quotes, volume, and open interest are retained separately for calls and puts. Expiry times and `is_expiry_day` are retained from the call.
+- The script writes the matched CSV described in [Data](data.md).
+
+### Mathematical logic
+
+Matching aligns $C(K)$ and $P(K)$ for the same security, quote date, and expiry. Subsequent forward inference must be performed separately for each security, quote date, and expiry.
+
+### Tests
+
+`tests/test_option_matching.py` covers output schema, value preservation, complete pairs, exclusion of mismatched keys, duplicate and missing key rejection, preservation of the expiry-day flag, and unchanged input data. Its small in-memory fixture is test-only.
 
 ## Test suite
 
@@ -147,6 +194,7 @@ The current test suite covers:
 - Synthetic forward and discount-factor recovery.
 - Call and put implied-volatility recovery and adaptive bracketing.
 - Call and put implied-volatility safety-cap handling.
+- Call-put matching and key validation.
 
 Run the suite with:
 

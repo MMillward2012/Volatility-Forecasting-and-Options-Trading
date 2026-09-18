@@ -1,3 +1,4 @@
+import numpy as np
 from scipy.optimize import brentq
 
 from src.pricing import black_scholes_call_price, black_scholes_put_price
@@ -30,18 +31,20 @@ def implied_volatility_call(
 
     objective_at_lower = objective(lower)
 
+    minimum_price = discount_factor * max(forward - strike, 0.0)
+    maximum_price = discount_factor * forward
+    if not np.isfinite(market_price) or not minimum_price <= market_price < maximum_price:
+        raise ValueError("Market call price must be finite and within Black price bounds.")
+    if market_price == minimum_price:
+        return 0.0
+
     if objective_at_lower > 0:
         raise ValueError(
-            "Market price is below the minimum Black call price."
+            "Implied volatility is below the minimum volatility bound."
         )
 
     objective_at_upper = objective(upper)
 
-    # If the Black price is still below the market price at the current upper
-    # volatility bound, then the root must lie at a higher volatility because
-    # the Black call price increases monotonically with volatility.
-    # Double the upper bound until the objective becomes non-negative,
-    # meaning the root has been bracketed, or until the safety cap is reached.
     while objective_at_upper < 0 and upper < maximum_upper:
         upper = min(upper * 2.0, maximum_upper)
         objective_at_upper = objective(upper)
@@ -81,9 +84,16 @@ def implied_volatility_put(
 
     objective_at_lower = objective(lower)
 
+    minimum_price = discount_factor * max(strike - forward, 0.0)
+    maximum_price = discount_factor * strike
+    if not np.isfinite(market_price) or not minimum_price <= market_price < maximum_price:
+        raise ValueError("Market put price must be finite and within Black price bounds.")
+    if market_price == minimum_price:
+        return 0.0
+
     if objective_at_lower > 0:
         raise ValueError(
-            "Market price is below the minimum Black put price."
+            "Implied volatility is below the minimum volatility bound."
         )
 
     objective_at_upper = objective(upper)
