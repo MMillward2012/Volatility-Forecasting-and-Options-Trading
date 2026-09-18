@@ -38,13 +38,20 @@ def test_infer_forward_and_discount_factor():
         )
     )
 
-    inferred_forward, inferred_discount_factor = (
-        infer_forward_and_discount_factor(
-            call_prices,
-            put_prices,
-            strikes,
-        )
-    )
-
     assert inferred_forward == pytest.approx(forward)
     assert inferred_discount_factor == pytest.approx(discount_factor)
+
+
+@pytest.mark.parametrize(
+    "call_prices, put_prices, strikes",
+    [
+        ([1.0], [0.5], [100.0]),
+        ([1.0, 2.0], [0.5], [100.0, 110.0]),
+        ([1.0, 2.0], [0.5, 1.0], [100.0, 100.0]),
+        ([1.0, np.nan], [0.5, 1.0], [100.0, 110.0]),
+        ([1.0, 2.0], [0.5, 1.0], [100.0, -110.0]),
+    ],
+)
+def test_infer_forward_rejects_invalid_inputs(call_prices, put_prices, strikes):
+    with pytest.raises(ValueError):
+        infer_forward_and_discount_factor(call_prices, put_prices, strikes)

@@ -1,4 +1,5 @@
 import pytest
+import numpy as np
 
 from src.pricing import (black_scholes_call_price, black_scholes_put_price)
 
@@ -53,3 +54,35 @@ def test_call_decreases_with_strike():
     )
 
     assert call1 > call2, "Call price should decrease as strike price increases"
+
+
+@pytest.mark.parametrize("parameter", [
+    "forward",
+    "strike",
+    "discount_factor",
+    "time_to_expiry",
+    "volatility",
+])
+def test_pricing_rejects_non_positive_inputs(parameter):
+    inputs = {
+        "forward": 100.0,
+        "strike": 110.0,
+        "discount_factor": 0.98,
+        "time_to_expiry": 0.5,
+        "volatility": 0.25,
+    }
+    inputs[parameter] = 0.0
+
+    with pytest.raises(ValueError, match=parameter):
+        black_scholes_call_price(**inputs)
+
+
+def test_pricing_rejects_non_finite_array_inputs():
+    with pytest.raises(ValueError, match="strike"):
+        black_scholes_call_price(
+            100.0,
+            np.array([100.0, np.nan]),
+            0.98,
+            0.5,
+            0.25,
+        )
