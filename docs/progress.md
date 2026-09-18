@@ -62,11 +62,12 @@ $$
 ### Implemented
 
 - `implied_volatility_call(...)` solves for call implied volatility using `scipy.optimize.brentq`.
-- The solver starts with an upper volatility of $5$, doubles it while the Black call price remains below the market price, and stops at the current safety cap of $20$.
+- `implied_volatility_put(...)` solves for put implied volatility using the same approach.
+- Each solver starts with an upper volatility of $5$, doubles it while the relevant Black option price remains below the market price, and stops at the current safety cap of $20$.
 
 ### Mathematical logic
 
-The solver defines:
+For calls, the solver defines:
 
 $$
 f(\sigma)
@@ -76,8 +77,18 @@ C_{\mathrm{BS}}(\sigma)
 C_{\mathrm{market}}.
 $$
 
-The Black call price is strictly increasing in volatility, so $f(\sigma)$
-is also increasing. The solver begins with the bracket
+For puts, the equivalent objective is:
+
+$$
+f(\sigma)
+=
+P_{\mathrm{BS}}(\sigma)
+-
+P_{\mathrm{market}}.
+$$
+
+The relevant Black option price is strictly increasing in volatility, so
+$f(\sigma)$ is also increasing. Each solver begins with the bracket
 
 $$
 \sigma_{\mathrm{lower}} = 10^{-8},
@@ -99,7 +110,7 @@ $$
 
 ### Tests
 
-`tests/test_implied_vol.py` covers synthetic implied-volatility recovery at volatilities $0.25$ and $8.0$. The higher-volatility case exercises the upper-bound growth.
+`tests/test_implied_vol.py` covers synthetic call and put implied-volatility recovery at volatilities $0.25$ and $8.0$. The higher-volatility cases exercise upper-bound growth, and additional tests verify that both solvers raise an error when the root cannot be bracketed below the safety cap.
 
 ## Test suite
 
@@ -108,7 +119,8 @@ The current test suite covers:
 - Black call and put pricing.
 - Put-call parity and pricing input validation.
 - Synthetic forward and discount-factor recovery.
-- Call implied-volatility recovery and adaptive bracketing.
+- Call and put implied-volatility recovery and adaptive bracketing.
+- Call and put implied-volatility safety-cap handling.
 
 Run the suite with:
 
