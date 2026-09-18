@@ -63,7 +63,6 @@ $$
 
 - `calculate_mid_price(bid, ask)` calculates the midpoint between bid and ask prices.
 - `calculate_time_to_expiry(quote_date, expiry_date)` calculates time to expiry in years using the ACT/365 convention.
-- `match_calls_and_puts(option_chain)` calculates quote midpoints and inner-joins calls and puts with the same quote date, expiry date, and strike.
 - Both functions support scalar values and NumPy/pandas-friendly inputs where natural.
 
 ### Mathematical logic
@@ -80,23 +79,9 @@ $$
 \tau = \frac{\mathrm{expiry\ date} - \mathrm{quote\ date}}{365}.
 $$
 
-The matching function prepares aligned call and put prices for downstream
-forward and discount-factor inference. It transforms raw quote rows such as:
-
-| quote_date | expiry_date | strike | option_type | bid | ask |
-| --- | --- | ---: | --- | ---: | ---: |
-| 2026-01-01 | 2026-07-01 | 80 | call | ... | ... |
-| 2026-01-01 | 2026-07-01 | 80 | put | ... | ... |
-
-into one row per matched strike:
-
-| quote_date | expiry_date | strike | call_mid | put_mid |
-| --- | --- | ---: | ---: | ---: |
-| 2026-01-01 | 2026-07-01 | 80 | ... | ... |
-
 ### Tests
 
-`tests/test_options_chain.py` covers scalar and array mid-price calculations, scalar and pandas Series time-to-expiry calculations, complete call-put matching, and exclusion of unmatched strikes. `tests/helper.py` provides synthetic option-chain data for tests only; it is not production functionality.
+`tests/test_options_chain.py` covers scalar and array mid-price calculations, plus scalar and pandas Series time-to-expiry calculations.
 
 ## `src/implied_vol.py`
 
