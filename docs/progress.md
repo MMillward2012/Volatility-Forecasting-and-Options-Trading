@@ -58,6 +58,81 @@ $$
 
 `tests/test_forward.py` covers synthetic recovery (including discount factors above one), zero prices, invalid input lengths and strikes, non-finite or negative prices, and invalid fitted results.
 
+## `src/forward_inference.py`
+
+### Implemented
+
+- `infer_expiry_forwards(...)` excludes expiry-day rows and applies the forward estimator separately to each `(security_id, quote_date, expiry_date)` group.
+- It records the inferred forward, discount factor, number of strikes, and parity RMSE for each expiry.
+- The script entry point reads the matched CSV and saves the expiry-level estimates to `data/processed/spx_forward_estimates_2025-08-29.csv`.
+
+### Mathematical logic
+
+For each expiry, the estimator fits:
+
+$$
+C_K-P_K=D(F-K)=DF-DK.
+$$
+
+The slope of the fitted line is $-D$ and the intercept is $DF$, so:
+
+$$
+D=-\text{slope},
+\qquad
+F=\frac{\text{intercept}}{D}.
+$$
+
+The parity RMSE is calculated from the midpoint residuals:
+
+$$
+\varepsilon_K=(C_{K,\mathrm{mid}}-P_{K,\mathrm{mid}})-D(F-K),
+\qquad
+\mathrm{RMSE}=\sqrt{\frac{1}{n}\sum_K\varepsilon_K^2}.
+$$
+
+### Validation
+
+The saved estimates reproduce the results from `infer_forward_and_discount_factor(...)` to floating-point precision. Expiry-day rows are excluded because their time to expiry is zero.
+
+### Tests
+
+`tests/test_forward_inference.py` covers synthetic expiry-level recovery, exclusion of expiry-day rows, and CSV output from the script entry point.
+
+## `notebooks/forward_inference_diagnostics.ipynb`
+
+### Implemented
+
+The notebook compares the baseline OLS estimates with a spread-weighted fit and diagnoses quote quality without applying production filters. It includes:
+
+- observed $C-P$ against strike with the fitted parity line;
+- parity residuals against strike and combined spread;
+- exploratory zero-bid and widest-5%-spread buckets;
+- a spread-weighted fit using objective weights proportional to $1/\text{combined spread}^2$;
+- normalized residuals $R_K$ against strike, with a threshold at $R_K=1$ and a vertical line at the inferred forward;
+- a per-expiry feasibility check for one common $F,D$ across all executable quote intervals.
+
+### Mathematical logic
+
+The executable parity interval for a matched call-put pair is:
+
+$$
+[C_{\mathrm{bid}}-P_{\mathrm{ask}},\quad C_{\mathrm{ask}}-P_{\mathrm{bid}}].
+$$
+
+The notebook tests whether a common pair $(F,D)$ satisfies this interval for every strike in an expiry:
+
+$$
+C_{\mathrm{bid}}-P_{\mathrm{ask}}
+\leq D(F-K)
+\leq C_{\mathrm{ask}}-P_{\mathrm{bid}}.
+$$
+
+With $A=DF$, this becomes a linear feasibility problem in $(A,D)$ because $D(F-K)=A-DK$. The check is separate from the OLS estimator and does not select a unique preferred pair.
+
+### Current result
+
+For the current SPX sample, all 38 positive-DTE expiries admit a feasible common $F,D$ within the executable intervals. The OLS diagnostics contain 1,006 individual normalized residual breaches, so those breaches do not prevent an expiry-level common fit.
+
 ## `src/options_chain.py`
 
 ### Implemented

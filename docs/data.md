@@ -85,6 +85,32 @@ Run from the repository root with `python -m src.option_matching`. The current f
 data/processed/spx_option_prices_matched_2025-08-29.csv
 ```
 
+## Forward estimates
+
+`src/forward_inference.py` reads the matched data, excludes the 409 expiry-day pairs, and estimates one forward and discount factor for each positive-DTE `(security_id, quote_date, expiry_date)` group using the midpoint call-put differences.
+
+The output is written to:
+
+```text
+data/processed/spx_forward_estimates_2025-08-29.csv
+```
+
+Its expiry-level fields are:
+
+```text
+security_id, quote_date, expiry_date,
+days_to_expiry, time_to_expiry,
+forward, discount_factor, n_strikes, parity_rmse
+```
+
+The estimates use:
+
+$$
+C_K-P_K=D(F-K).
+$$
+
+The current diagnostic notebook also compares the OLS fit with a spread-weighted fit and checks whether a single common $F,D$ can satisfy the executable parity interval for every strike in each expiry. These checks are exploratory and do not currently filter the matched data or replace the baseline estimates.
+
 ## Current caveats
 
 - Rows with zero midpoint have an undefined `relative_spread`, represented as `NaN`.
