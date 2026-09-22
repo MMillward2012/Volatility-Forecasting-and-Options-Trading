@@ -111,6 +111,27 @@ $$
 
 The current diagnostic notebook also compares the OLS fit with a spread-weighted fit and checks whether a single common $F,D$ can satisfy the executable parity interval for every strike in each expiry. These checks are exploratory and do not currently filter the matched data or replace the baseline estimates.
 
+## IV-analysis panel
+
+`src/iv_panel.py` joins the cleaned option rows to the expiry-level forward estimates after excluding expiry-day rows. It writes:
+
+```text
+data/processed/spx_iv_panel_2025-08-29.csv
+```
+
+The panel retains the cleaned option fields and adds:
+
+| Column | Meaning |
+| --- | --- |
+| `forward` | Joined expiry-level forward estimate |
+| `discount_factor` | Joined expiry-level discount factor |
+| `log_moneyness` | $\log(K/F)$ |
+| `mid_iv` | Implied volatility inverted from the option midpoint |
+| `is_otm` | OTM put for $K<F$ or OTM call for $K>F$ |
+| `use_for_surface` | `True` only for OTM observations with valid `mid_iv` |
+
+If a midpoint lies outside the admissible Black bounds, `mid_iv` is `NaN` for that observation. Missing expiry-level forward data raises an error if the merge would drop any positive-DTE option rows.
+
 ## Current caveats
 
 - Rows with zero midpoint have an undefined `relative_spread`, represented as `NaN`.

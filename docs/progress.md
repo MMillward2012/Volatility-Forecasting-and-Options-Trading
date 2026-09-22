@@ -227,6 +227,39 @@ $$
 
 `tests/test_implied_vol.py` covers call and put recovery at $0.25$, $8$, and the cap of $20$; rejection of valid prices generated at $\sigma=30$ with $\tau=0.01$; invalid market prices; zero-volatility returns at intrinsic value; and model input validation.
 
+## `src/iv_panel.py`
+
+### Implemented
+
+- `build_iv_panel(...)` keeps positive-DTE cleaned option rows and joins their expiry-level forward and discount factor.
+- It computes log-moneyness, $k=\log(K/F)$, and midpoint implied volatility using the existing call and put solvers.
+- Vendor IV is retained as `vendor_iv`; calculated midpoint IV is stored as `mid_iv`.
+- `is_otm` identifies puts with $K<F$ and calls with $K>F$. `use_for_surface` is true only when the observation is OTM and `mid_iv` is valid.
+- Missing expiry-level forward data raises an error instead of dropping rows silently. A midpoint outside the admissible Black bounds produces `mid_iv = NaN` for that observation.
+- The script entry point saves the panel to `data/processed/spx_iv_panel_2025-08-29.csv`.
+
+### Mathematical logic
+
+For each option, log-moneyness is:
+
+$$
+k=\log\left(\frac{K}{F}\right).
+$$
+
+The calculated midpoint IV is the volatility that solves the relevant Black pricing equation using the joined expiry-level $F$ and $D$. OTM surface eligibility follows:
+
+$$
+\text{put if }K<F,
+\qquad
+\text{call if }K>F.
+$$
+
+An exact $K=F$ observation is not marked OTM.
+
+### Tests
+
+`tests/test_iv_panel.py` covers synthetic call and put IV recovery, log-moneyness, invalid midpoint handling, and missing forward-data rejection.
+
 ## `src/data_cleaning.py`
 
 ### Implemented
@@ -270,6 +303,7 @@ The current test suite covers:
 - Expiry-level forward inference, expiry-day exclusion, and saved CSV output.
 - Call and put implied-volatility recovery and adaptive bracketing.
 - Call and put implied-volatility safety-cap handling.
+- IV-panel construction, midpoint IV recovery, surface eligibility, and missing-forward validation.
 - Call-put matching and key validation.
 
 Run the suite with:
