@@ -37,6 +37,13 @@ def _calculate_implied_volatility(row):
         return np.nan
 
 
+def _validate_panel_inputs(panel):
+    for column in ["forward", "discount_factor", "strike", "time_to_expiry"]:
+        values = panel[column].to_numpy(dtype=float)
+        if not np.all(np.isfinite(values)) or not np.all(values > 0):
+            raise ValueError(f"{column} must contain only finite positive values.")
+
+
 def build_iv_panel(cleaned_options, forward_estimates):
     """Build an implied-volatility analysis panel from cleaned option rows."""
     options = cleaned_options[cleaned_options["days_to_expiry"] > 0].copy()
@@ -53,6 +60,7 @@ def build_iv_panel(cleaned_options, forward_estimates):
     if len(panel) != len(options):
         raise ValueError("Every positive-DTE option must have expiry-level forward data.")
 
+    _validate_panel_inputs(panel)
     panel["log_moneyness"] = np.log(panel["strike"] / panel["forward"])
     panel["mid_iv"] = panel.apply(_calculate_implied_volatility, axis=1)
     panel["is_otm"] = (

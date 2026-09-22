@@ -130,7 +130,7 @@ The panel retains the cleaned option fields and adds:
 | `is_otm` | OTM put for $K<F$ or OTM call for $K>F$ |
 | `use_for_surface` | `True` only for OTM observations with valid `mid_iv` |
 
-If a midpoint lies outside the admissible Black bounds, `mid_iv` is `NaN` for that observation. Missing expiry-level forward data raises an error if the merge would drop any positive-DTE option rows.
+If a midpoint lies outside the admissible Black bounds, `mid_iv` is `NaN` for that observation. Joined `forward`, `discount_factor`, `strike`, and `time_to_expiry` values must be finite and strictly positive. Missing expiry-level forward data raises an error if the merge would drop any positive-DTE option rows.
 
 ## Current caveats
 

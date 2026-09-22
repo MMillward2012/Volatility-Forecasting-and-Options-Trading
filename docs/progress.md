@@ -232,6 +232,7 @@ $$
 ### Implemented
 
 - `build_iv_panel(...)` keeps positive-DTE cleaned option rows and joins their expiry-level forward and discount factor.
+- Joined `forward`, `discount_factor`, `strike`, and `time_to_expiry` values must be finite and strictly positive before IV inversion.
 - It computes log-moneyness, $k=\log(K/F)$, and midpoint implied volatility using the existing call and put solvers.
 - Vendor IV is retained as `vendor_iv`; calculated midpoint IV is stored as `mid_iv`.
 - `is_otm` identifies puts with $K<F$ and calls with $K>F$. `use_for_surface` is true only when the observation is OTM and `mid_iv` is valid.

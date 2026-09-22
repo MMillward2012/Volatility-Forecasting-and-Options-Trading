@@ -85,3 +85,22 @@ def test_build_iv_panel_marks_invalid_midpoint():
 def test_build_iv_panel_rejects_missing_forward_data():
     with pytest.raises(ValueError, match="Every positive-DTE"):
         build_iv_panel(option_rows(), expiry_estimate().iloc[0:0])
+
+
+@pytest.mark.parametrize(
+    "column",
+    ["forward", "discount_factor", "strike", "time_to_expiry"],
+)
+def test_build_iv_panel_rejects_invalid_positive_inputs(column):
+    options = option_rows()
+    forwards = expiry_estimate()
+
+    if column == "strike":
+        options[column] = 0.0
+    elif column == "time_to_expiry":
+        options[column] = np.nan
+    else:
+        forwards.loc[0, column] = 0.0
+
+    with pytest.raises(ValueError, match=column):
+        build_iv_panel(options, forwards)
