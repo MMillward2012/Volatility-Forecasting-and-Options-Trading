@@ -25,13 +25,16 @@ def _calculate_implied_volatility(row):
         if row["option_type"] == "call"
         else implied_volatility_put
     )
-    return solver(
-        row["mid_price"],
-        row["forward"],
-        row["strike"],
-        row["discount_factor"],
-        row["time_to_expiry"],
-    )
+    try:
+        return solver(
+            row["mid_price"],
+            row["forward"],
+            row["strike"],
+            row["discount_factor"],
+            row["time_to_expiry"],
+        )
+    except ValueError:
+        return np.nan
 
 
 def build_iv_panel(cleaned_options, forward_estimates):
@@ -47,14 +50,16 @@ def build_iv_panel(cleaned_options, forward_estimates):
         how="inner",
         validate="many_to_one",
     )
+    if len(panel) != len(options):
+        raise ValueError("Every positive-DTE option must have expiry-level forward data.")
 
     panel["log_moneyness"] = np.log(panel["strike"] / panel["forward"])
-    panel["model_iv"] = panel.apply(_calculate_implied_volatility, axis=1)
+    panel["mid_iv"] = panel.apply(_calculate_implied_volatility, axis=1)
     panel["is_otm"] = (
         ((panel["option_type"] == "put") & (panel["strike"] < panel["forward"]))
         | ((panel["option_type"] == "call") & (panel["strike"] > panel["forward"]))
     )
-    panel["use_for_surface"] = panel["is_otm"]
+    panel["use_for_surface"] = panel["is_otm"] & panel["mid_iv"].notna()
 
     return panel
 
