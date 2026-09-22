@@ -267,6 +267,7 @@ The current test suite covers:
 - Black call and put pricing.
 - Put-call parity and pricing input validation.
 - Synthetic forward and discount-factor recovery.
+- Expiry-level forward inference, expiry-day exclusion, and saved CSV output.
 - Call and put implied-volatility recovery and adaptive bracketing.
 - Call and put implied-volatility safety-cap handling.
 - Call-put matching and key validation.
