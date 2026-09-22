@@ -261,6 +261,33 @@ An exact $K=F$ observation is not marked OTM.
 
 `tests/test_iv_panel.py` covers synthetic call and put IV recovery, log-moneyness, invalid midpoint handling, and missing forward-data rejection.
 
+## `notebooks/iv_surface_diagnostics.ipynb`
+
+### Implemented
+
+- Reads the local IV panel and summarises inversion failures by option type, DTE, and log-moneyness.
+- Compares midpoint and vendor IVs for both the available comparison sample and the OTM surface sample.
+- Plots raw OTM smiles for expiries nearest 7, 30, 90, and 365 DTE, without fitting or smoothing.
+- Summarises quote counts, zero bids, midpoint prices, relative spreads, and IVs by moneyness/DTE bucket.
+- Creates a notebook-only `use_for_fit` flag, redraws the smiles, and compares expiry-level coverage with the previous spread screen and a 0.25 midpoint-floor alternative. The original rows and saved CSV are unchanged.
+
+### Mathematical logic
+
+Vendor comparisons use $\Delta\sigma=\sigma_{\mathrm{mid}}-\sigma_{\mathrm{vendor}}$. With midpoint $M=(\mathrm{bid}+\mathrm{ask})/2$, the provisional fitting screen requires `use_for_surface`, finite bid, ask, midpoint, midpoint IV, and relative spread, plus:
+
+$$
+M>0,\qquad 0<\mathrm{bid}<\mathrm{ask},\qquad
+0<\frac{\mathrm{ask}-\mathrm{bid}}{M}\leq 0.50.
+$$
+
+Locked (`bid == ask`) and crossed quotes are excluded from fitting; a zero recorded spread is not treated as evidence of precise IV. No premium floor, IV-level cap, volume, or open-interest filter is applied. These are provisional sample-selection rules, not a proof that excluded quotes are erroneous or the retained sample is arbitrage-free. Current coverage is recorded in [Data](data.md#notebook-fitting-sample).
+
+### Tests
+
+The notebook has been executed end-to-end. Separate, one-off checks cover the spread boundary, locked/crossed and zero-bid quotes, non-finite inputs, retention of inexpensive and high-IV observations, and preservation of the original panel fields. These checks are not part of the committed pytest suite. The current sample retains calls and puts for every positive-DTE expiry.
+
+Fitting stability across screening choices and additional quote dates remains untested; no SSVI calibration is implemented yet.
+
 ## `src/data_cleaning.py`
 
 ### Implemented

@@ -26,7 +26,7 @@ to:
 data/processed/spx_option_prices_cleaned_2025-08-29.csv
 ```
 
-No other row filters are currently applied.
+No other row filters are applied by this cleaning step.
 
 Run from the repository root with `python -m src.data_cleaning`. The settlement filter lives in the script entry point; direct calls to `clean_option_data(...)` transform the supplied rows without that filter.
 
@@ -132,9 +132,31 @@ The panel retains the cleaned option fields and adds:
 
 If a midpoint lies outside the admissible Black bounds, `mid_iv` is `NaN` for that observation. Joined `forward`, `discount_factor`, `strike`, and `time_to_expiry` values must be finite and strictly positive. Missing expiry-level forward data raises an error if the merge would drop any positive-DTE option rows.
 
+## Notebook fitting sample
+
+`notebooks/iv_surface_diagnostics.ipynb` creates `use_for_fit` in memory. This flag is **not** currently written by `src/iv_panel.py` or saved in the panel CSV. It requires:
+
+- `use_for_surface == True`;
+- finite bid, ask, midpoint, midpoint IV, and relative spread;
+- a positive midpoint and `0 < best_bid < best_ask`;
+- `0 < relative_spread <= 0.50`.
+
+The notebook retains every original row and uses the flag only to select the fitting-sample plots. It imposes no premium floor or IV-level cap. Locked quotes are excluded as a fitting-screen choice, not classified as necessarily erroneous.
+
+For the **2025-08-29** snapshot:
+
+| Sample | All positive-DTE expiries | 1–7 DTE |
+| --- | ---: | ---: |
+| Valid OTM IVs (`use_for_surface`) | 7,426 | 871 |
+| Previous positive-bid / 50% relative-spread screen | 6,598 | 607 |
+| Previous screen plus midpoint at least 0.25 | 6,466 | 506 |
+| Selected positive-spread screen (`use_for_fit`) | 6,550 | 559 |
+
+The selected screen removes 48 locked quotes from the previous sample while retaining 84 observations rejected by the premium-floor alternative. All 38 positive-DTE expiries retain both calls and puts. The notebook reports per-expiry coverage; the 50% spread cutoff remains provisional and has not been validated through surface fitting or across multiple quote dates.
+
 ## Current caveats
 
 - Rows with zero midpoint have an undefined `relative_spread`, represented as `NaN`.
-- Expiry-day rows are retained and flagged in both outputs. Exclude or handle them before pricing or IV inversion, which require positive time to expiry.
+- Expiry-day rows are retained and flagged in the cleaned and matched outputs, but excluded from forward inference and the IV panel.
 - Vendor Greeks and implied volatility are retained as benchmarks, not as model outputs.
 - Matching does not apply liquidity or model-estimation filters. Forward and discount-factor inference must use one security, quote date, and expiry at a time.
