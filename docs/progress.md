@@ -288,13 +288,13 @@ The notebook has been executed end-to-end. Separate, one-off checks cover the sp
 
 Fitting stability across screening choices and additional quote dates remains untested; no SSVI calibration is implemented yet.
 
-## `notebooks/svi_single_expiry.ipynb`
+## `notebooks/single_expiry_SSVI_slice.ipynb`
 
 ### Implemented
 
-- Selects the 2025-11-28 expiry from the valid OTM IV sample.
+- Applies the existing notebook fitting screen and selects the 2025-11-28 expiry from the filtered OTM IV sample.
 - Converts midpoint implied volatility to total variance and plots it against log-moneyness.
-- Fits a single SVI slice by bounded nonlinear least squares and reports the fitted parameters and total-variance RMSE.
+- Fits a single SSVI-style slice by bounded nonlinear least squares and reports the fitted parameters and total-variance RMSE.
 - Shows the separate effects of $\rho$, $\theta$, and $\varphi$ using the fitted slice as the baseline.
 - Provides manual sliders initialized at the fitted values. Slider changes replace one managed plot instead of appending figures.
 
@@ -318,11 +318,11 @@ w(k)=\frac{\theta}{2}
 \right).
 $$
 
-Here $\theta$ controls the variance level, $\rho$ controls the direction and strength of skew, and $\varphi$ controls curvature and wing steepness. The fit minimizes unweighted squared errors in total variance across the selected expiry.
+Here $\theta$ controls the variance level, $\rho$ controls the direction and strength of skew, and $\varphi$ controls curvature and wing steepness. The fit minimizes unweighted squared errors in total variance across the filtered observations for the selected expiry.
 
 ### Validation and limitations
 
-The notebook structure and every code cell have been syntax-checked, with saved outputs and execution counts removed. The fitted values are exploratory defaults for understanding parameter effects. The fit is not yet used by production code and has not been checked for static arbitrage, weighted by quote quality, or extended jointly across expiries.
+The notebook structure and every code cell have been syntax-checked, with saved outputs and execution counts removed. The filtered sample uses the same provisional `use_for_fit` rules documented for the IV diagnostics notebook. The fitted values are exploratory defaults for understanding parameter effects. The fit is not yet used by production code and has not been checked for static arbitrage or extended jointly across expiries.
 
 ## `src/data_cleaning.py`
 
