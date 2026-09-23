@@ -286,7 +286,7 @@ Locked (`bid == ask`) and crossed quotes are excluded from fitting; a zero recor
 
 The notebook has been executed end-to-end. Separate, one-off checks cover the spread boundary, locked/crossed and zero-bid quotes, non-finite inputs, retention of inexpensive and high-IV observations, and preservation of the original panel fields. These checks are not part of the committed pytest suite. The current sample retains calls and puts for every positive-DTE expiry.
 
-Fitting stability across screening choices and additional quote dates remains untested; no SSVI calibration is implemented yet.
+Fitting stability across screening choices and additional quote dates remains untested. The exploratory SSVI calibration below now uses this screening rule.
 
 ## `notebooks/single_expiry_SSVI_slice.ipynb`
 
@@ -340,6 +340,49 @@ $$
 
 The notebook has been run, and its cell outputs are saved in the notebook, including the filtered-sample summary, fitted parameters, and plots. The filtered sample uses the same provisional `use_for_fit` rules documented for the IV diagnostics notebook. The nearest-to-forward quote is currently used as the ATM proxy rather than interpolating $w(0)$. The fitted values are exploratory defaults for understanding parameter effects. The fit is not yet used by production code and has not been checked for static arbitrage or extended jointly across expiries.
 
+## `src/ssvi.py`
+
+### Implemented
+
+- `ssvi_phi(...)` and `ssvi_total_variance(...)` evaluate the global SSVI parameterisation.
+- `estimate_atm_theta(...)` takes ATM total variance from the filtered observation nearest $k=0$ for one expiry.
+- `fit_ssvi_surface(...)` applies the existing OTM quote screen to one quote date and security, estimates ATM variance for each expiry, and fits shared $\rho$, $\eta$, and $\gamma$ by least squares.
+- The result includes the parameters, total-variance RMSE, a table of expiry ATM variances, and the retained observations with market variance, fitted variance, residuals, and fitted IV.
+
+### Mathematical logic
+
+For each expiry $j$, $\theta_j$ is held fixed during the global fit. With
+
+$$
+\varphi(\theta)=\eta\theta^{-\gamma},
+$$
+
+the surface is
+
+$$
+w_{\mathrm{SSVI}}(k,\theta)
+=\frac{\theta}{2}
+\left[1+\rho\varphi(\theta)k
++\sqrt{(\varphi(\theta)k+\rho)^2+1-\rho^2}\right].
+$$
+
+The fit minimizes $\sum_i[w_{\mathrm{SSVI}}(k_i,\theta_{j(i)})-w_i^{\mathrm{market}}]^2$ over the shared $\rho$, $\eta$, and $\gamma$.
+
+### Tests
+
+`tests/test_ssvi.py` checks recovery of known shared parameters and expiry ATM variances from synthetic smiles, including exclusion of a zero-bid quote.
+
+## `notebooks/ssvi_surface_diagnostics.ipynb`
+
+### Implemented
+
+- Loads the 2025-08-29 IV panel and calls `fit_ssvi_surface(...)`.
+- Shows fitted parameters and expiry ATM variances, overlays observed and fitted total variance for representative maturities, plots total-variance residuals, and compares observed IV with fitted expiry slices in 3D. A Plotly mesh of the fitted slices can be rotated in the notebook.
+
+### Limitations
+
+The notebook has been run and includes a saved, rotatable Plotly surface output. This is an exploratory fit for one quote date. It does not establish absence of static arbitrage or stability across quote dates and screening choices.
+
 ## `src/data_cleaning.py`
 
 ### Implemented
@@ -384,6 +427,7 @@ The current test suite covers:
 - Call and put implied-volatility recovery and adaptive bracketing.
 - Call and put implied-volatility safety-cap handling.
 - IV-panel construction, midpoint IV recovery, surface eligibility, and missing-forward validation.
+- Synthetic global SSVI parameter and expiry ATM-variance recovery.
 - Call-put matching and key validation.
 
 Run the suite with:
