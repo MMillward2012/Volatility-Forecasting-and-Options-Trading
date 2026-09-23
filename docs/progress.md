@@ -288,6 +288,42 @@ The notebook has been executed end-to-end. Separate, one-off checks cover the sp
 
 Fitting stability across screening choices and additional quote dates remains untested; no SSVI calibration is implemented yet.
 
+## `notebooks/svi_single_expiry.ipynb`
+
+### Implemented
+
+- Selects the 2025-11-28 expiry from the valid OTM IV sample.
+- Converts midpoint implied volatility to total variance and plots it against log-moneyness.
+- Fits a single SVI slice by bounded nonlinear least squares and reports the fitted parameters and total-variance RMSE.
+- Shows the separate effects of $\rho$, $\theta$, and $\varphi$ using the fitted slice as the baseline.
+- Provides manual sliders initialized at the fitted values. Slider changes replace one managed plot instead of appending figures.
+
+### Mathematical logic
+
+For time to expiry $\tau$, implied volatility is represented as total variance:
+
+$$
+w(k)=\sigma_{\mathrm{IV}}(k)^2\tau,
+\qquad
+k=\log(K/F).
+$$
+
+The exploratory slice uses:
+
+$$
+w(k)=\frac{\theta}{2}
+\left(
+1+\rho\varphi k
++\sqrt{(\varphi k+\rho)^2+1-\rho^2}
+\right).
+$$
+
+Here $\theta$ controls the variance level, $\rho$ controls the direction and strength of skew, and $\varphi$ controls curvature and wing steepness. The fit minimizes unweighted squared errors in total variance across the selected expiry.
+
+### Validation and limitations
+
+The notebook structure and every code cell have been syntax-checked, with saved outputs and execution counts removed. The fitted values are exploratory defaults for understanding parameter effects. The fit is not yet used by production code and has not been checked for static arbitrage, weighted by quote quality, or extended jointly across expiries.
+
 ## `src/data_cleaning.py`
 
 ### Implemented
