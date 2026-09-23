@@ -346,7 +346,7 @@ The notebook has been run, and its cell outputs are saved in the notebook, inclu
 
 - `ssvi_phi(...)` and `ssvi_total_variance(...)` evaluate the global SSVI parameterisation.
 - `estimate_atm_theta(...)` takes ATM total variance from the filtered observation nearest $k=0$ for one expiry.
-- `fit_ssvi_surface(...)` applies the existing OTM quote screen to one quote date and security, estimates ATM variance for each expiry, and fits shared $\rho$, $\eta$, and $\gamma$ by least squares.
+- `fit_ssvi_surface(...)` applies the existing OTM quote screen by default to one quote date and security, estimates ATM variance for each expiry, and fits shared $\rho$, $\eta$, and $\gamma$ by least squares. `apply_quote_screen=False` retains every valid OTM IV for comparison.
 - The result includes the parameters, total-variance RMSE, a table of expiry ATM variances, and the retained observations with market variance, fitted variance, residuals, and fitted IV.
 
 ### Mathematical logic
@@ -378,6 +378,7 @@ The fit minimizes $\sum_i[w_{\mathrm{SSVI}}(k_i,\theta_{j(i)})-w_i^{\mathrm{mark
 
 - Loads the 2025-08-29 IV panel and calls `fit_ssvi_surface(...)`.
 - Shows fitted parameters and expiry ATM variances, overlays observed and fitted total variance for representative maturities, plots total-variance residuals, and compares observed IV with fitted expiry slices in 3D. A Plotly mesh of the fitted slices can be rotated in the notebook.
+- Repeats the calibration with all valid OTM IVs before the bid/spread screen, compares the parameters and representative slices, and plots both observed and fitted IV at every unscreened quote location with their fitted surface.
 
 ### Limitations
 

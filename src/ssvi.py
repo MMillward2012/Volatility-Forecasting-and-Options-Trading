@@ -17,9 +17,9 @@ def ssvi_total_variance(k, theta, rho, eta, gamma):
 
 
 def estimate_atm_theta(expiry_rows):
-    """Use the filtered quote nearest the forward as the ATM variance proxy."""
+    """Use the quote nearest the forward as the ATM variance proxy."""
     if expiry_rows.empty:
-        raise ValueError("Each expiry needs at least one filtered quote.")
+        raise ValueError("Each expiry needs at least one quote.")
 
     atm_row = expiry_rows.iloc[expiry_rows["log_moneyness"].abs().argmin()]
     theta = atm_row["mid_iv"] ** 2 * atm_row["time_to_expiry"]
@@ -28,34 +28,38 @@ def estimate_atm_theta(expiry_rows):
     return float(theta)
 
 
-def fit_ssvi_surface(panel):
-    """Fit one SSVI surface to the screened OTM quotes for one date/security."""
+def fit_ssvi_surface(panel, apply_quote_screen=True):
+    """Fit one SSVI surface to OTM quotes for one date and security."""
     if panel.empty or panel["quote_date"].nunique() != 1:
         raise ValueError("panel must contain one nonempty quote date.")
     if panel["security_id"].nunique() != 1:
         raise ValueError("panel must contain one security_id.")
 
-    quote_columns = ["best_bid", "best_ask", "mid_price", "mid_iv", "relative_spread"]
-    finite_quotes = np.isfinite(
-        panel[quote_columns].to_numpy(dtype=float)
-    ).all(axis=1)
-    use_for_fit = (
-        panel["use_for_surface"].fillna(False)
-        & finite_quotes
-        & panel["best_bid"].gt(0)
-        & panel["best_ask"].gt(panel["best_bid"])
-        & panel["mid_price"].gt(0)
-        & panel["relative_spread"].between(0, 0.50, inclusive="right")
-    )
+    use_for_fit = panel["use_for_surface"].fillna(False)
+    if apply_quote_screen:
+        quote_columns = [
+            "best_bid", "best_ask", "mid_price", "mid_iv", "relative_spread"
+        ]
+        finite_quotes = np.isfinite(
+            panel[quote_columns].to_numpy(dtype=float)
+        ).all(axis=1)
+        use_for_fit = (
+            use_for_fit
+            & finite_quotes
+            & panel["best_bid"].gt(0)
+            & panel["best_ask"].gt(panel["best_bid"])
+            & panel["mid_price"].gt(0)
+            & panel["relative_spread"].between(0, 0.50, inclusive="right")
+        )
     rows = panel.loc[use_for_fit].copy()
     if rows.empty:
-        raise ValueError("No quotes pass the SSVI fitting screen.")
+        raise ValueError("No OTM quotes are available for SSVI fitting.")
     for column in ["log_moneyness", "mid_iv", "time_to_expiry"]:
         values = rows[column].to_numpy(dtype=float)
         if not np.isfinite(values).all():
-            raise ValueError(f"{column} must be finite for filtered quotes.")
+            raise ValueError(f"{column} must be finite for fitted quotes.")
     if not (rows["mid_iv"] > 0).all() or not (rows["time_to_expiry"] > 0).all():
-        raise ValueError("Filtered quotes need positive IV and time to expiry.")
+        raise ValueError("Fitted quotes need positive IV and time to expiry.")
 
     theta_by_expiry = pd.DataFrame(
         [

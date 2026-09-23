@@ -48,3 +48,6 @@ def test_fit_ssvi_surface_recovers_shared_parameters_and_expiry_thetas():
     )
     np.testing.assert_allclose(result["observations"]["residual_w"], 0, atol=1e-8)
     assert len(result["observations"]) == len(rows)
+
+    unscreened = fit_ssvi_surface(panel, apply_quote_screen=False)
+    assert len(unscreened["observations"]) == len(rows) + 1
