@@ -338,7 +338,7 @@ $$
 
 ### Validation and limitations
 
-The notebook structure and every code cell have been syntax-checked, with saved outputs and execution counts removed. The filtered sample uses the same provisional `use_for_fit` rules documented for the IV diagnostics notebook. The nearest-to-forward quote is currently used as the ATM proxy rather than interpolating $w(0)$. The fitted values are exploratory defaults for understanding parameter effects. The fit is not yet used by production code and has not been checked for static arbitrage or extended jointly across expiries.
+The notebook has been run, and its cell outputs are saved in the notebook, including the filtered-sample summary, fitted parameters, and plots. The filtered sample uses the same provisional `use_for_fit` rules documented for the IV diagnostics notebook. The nearest-to-forward quote is currently used as the ATM proxy rather than interpolating $w(0)$. The fitted values are exploratory defaults for understanding parameter effects. The fit is not yet used by production code and has not been checked for static arbitrage or extended jointly across expiries.
 
 ## `src/data_cleaning.py`
 
