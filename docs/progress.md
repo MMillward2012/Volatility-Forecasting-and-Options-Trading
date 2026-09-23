@@ -294,9 +294,10 @@ Fitting stability across screening choices and additional quote dates remains un
 
 - Applies the existing notebook fitting screen and selects the 2025-11-28 expiry from the filtered OTM IV sample.
 - Converts midpoint implied volatility to total variance and plots it against log-moneyness.
-- Fits a single SSVI-style slice by bounded nonlinear least squares and reports the fitted parameters and total-variance RMSE.
+- Fixes $\theta_{\mathrm{ATM}}$ from the filtered observation nearest $k=0$, then fits $\rho$ and $\varphi$ by bounded nonlinear least squares.
+- Reports the fitted $\rho$ and $\varphi$, fixed ATM total variance, and total-variance RMSE.
 - Shows the separate effects of $\rho$, $\theta$, and $\varphi$ using the fitted slice as the baseline.
-- Provides manual sliders initialized at the fitted values. Slider changes replace one managed plot instead of appending figures.
+- Provides manual sliders initialized at the fitted $\rho$ and $\varphi$ and fixed $\theta_{\mathrm{ATM}}$. Slider changes replace one managed plot instead of appending figures.
 
 ### Mathematical logic
 
@@ -318,11 +319,26 @@ w(k)=\frac{\theta}{2}
 \right).
 $$
 
-Here $\theta$ controls the variance level, $\rho$ controls the direction and strength of skew, and $\varphi$ controls curvature and wing steepness. The fit minimizes unweighted squared errors in total variance across the filtered observations for the selected expiry.
+Here $\theta$ controls the variance level, $\rho$ controls the direction and strength of skew, and $\varphi$ controls curvature and wing steepness. ATM total variance is fixed as:
+
+$$
+\theta_{\mathrm{ATM}}=\sigma_{\mathrm{ATM}}^2\tau.
+$$
+
+Using the filtered observation nearest $k=0$ as the ATM observation, the notebook fits only $\rho$ and $\varphi$:
+
+$$
+\min_{\rho,\varphi}
+\sum_i
+\left[
+w_{\mathrm{SSVI}}(k_i;\theta_{\mathrm{ATM}},\rho,\varphi)
+-w_i^{\mathrm{market}}
+\right]^2.
+$$
 
 ### Validation and limitations
 
-The notebook structure and every code cell have been syntax-checked, with saved outputs and execution counts removed. The filtered sample uses the same provisional `use_for_fit` rules documented for the IV diagnostics notebook. The fitted values are exploratory defaults for understanding parameter effects. The fit is not yet used by production code and has not been checked for static arbitrage or extended jointly across expiries.
+The notebook structure and every code cell have been syntax-checked, with saved outputs and execution counts removed. The filtered sample uses the same provisional `use_for_fit` rules documented for the IV diagnostics notebook. The nearest-to-forward quote is currently used as the ATM proxy rather than interpolating $w(0)$. The fitted values are exploratory defaults for understanding parameter effects. The fit is not yet used by production code and has not been checked for static arbitrage or extended jointly across expiries.
 
 ## `src/data_cleaning.py`
 
