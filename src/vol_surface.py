@@ -242,8 +242,11 @@ def check_surface_quality(time_to_expiry, surface_grid, k_range=None):
         k_nodes[1:-1] - knot_step,
         k_nodes[1:-1] + knot_step,
     ])
-    strikes = np.unique(np.exp(test_k))
-    test_k = np.clip(np.log(strikes), lower, upper)
+    test_k = np.unique(np.clip(test_k, lower, upper))
+    strikes = np.exp(test_k)
+    distinct_strikes = np.r_[True, np.diff(strikes) > 0]
+    test_k = test_k[distinct_strikes]
+    strikes = strikes[distinct_strikes]
     evaluated = evaluate_surface(test_k, tau, surface_grid)
     if (
         not np.isfinite(evaluated["implied_volatility"]).all()
