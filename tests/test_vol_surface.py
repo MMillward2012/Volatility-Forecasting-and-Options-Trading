@@ -4,6 +4,7 @@ import pytest
 
 from src.vol_surface import (
     build_total_variance_grid,
+    count_calendar_crossings,
     enforce_calendar_monotonicity,
     evaluate_surface,
 )
@@ -59,6 +60,13 @@ def test_calendar_projection_ignores_unsupported_maturities():
     np.testing.assert_allclose(repaired[1:, 1], [0.035, 0.035])
 
 
+def test_calendar_crossing_count_compares_consecutive_supported_maturities():
+    raw = np.array([[0.03, np.nan], [np.nan, 0.01], [0.02, np.nan]])
+
+    assert count_calendar_crossings(raw) == 1
+    assert count_calendar_crossings(enforce_calendar_monotonicity(raw)) == 0
+
+
 def test_evaluate_surface_interpolates_variance_before_converting_to_iv():
     surface = {
         "time_to_expiry": np.array([1.0, 2.0]),
@@ -94,16 +102,37 @@ def test_evaluate_surface_rejects_extrapolation():
 def test_evaluate_surface_requires_two_supported_maturities_for_interpolation():
     surface = {
         "time_to_expiry": np.array([1.0, 2.0, 3.0]),
-        "log_moneyness": np.array([-0.5, 0.25]),
-        "sampled_support_min": np.array([-0.2, -0.1, 0.0]),
-        "sampled_support_max": np.array([0.0, 0.2, 0.25]),
+        "log_moneyness": np.array([-0.2, -0.1, 0.0, 0.1, 0.2]),
+        "sampled_support_min": np.array([-0.2, -0.1, -0.2]),
+        "sampled_support_max": np.array([0.2, 0.1, 0.2]),
         "repaired_total_variance": np.array(
-            [[0.04, 0.05], [0.06, 0.07], [0.08, 0.09]]
+            [[0.01] * 5, [np.nan, 0.04, 0.04, 0.04, np.nan], [0.09] * 5]
         ),
     }
 
-    with pytest.raises(ValueError, match="not bracketed"):
+    with pytest.raises(ValueError, match="each surrounding expiry"):
         evaluate_surface(-0.15, 1.5, surface)
+    with pytest.raises(ValueError, match="each surrounding expiry"):
+        evaluate_surface(-0.15, 2.0, surface)
 
     exact = evaluate_surface(-0.15, 1.0, surface)
-    assert exact["total_variance"] == pytest.approx(0.0446666667)
+    assert exact["total_variance"] == pytest.approx(0.01)
+
+    inside = evaluate_surface(np.array([-0.1, 0.0, 0.1]), 1.5, surface)
+    np.testing.assert_allclose(inside["total_variance"], 0.025)
+    with pytest.raises(ValueError, match="each surrounding expiry"):
+        evaluate_surface(0.1 + 1e-9, 1.5, surface)
+
+
+def test_exact_expiry_uses_its_own_support_and_preserves_grid_values():
+    surface = {
+        "time_to_expiry": np.array([1.0, 2.0]),
+        "log_moneyness": np.array([-0.1, 0.0, 0.1]),
+        "sampled_support_min": np.array([-0.1, 0.0]),
+        "sampled_support_max": np.array([0.1, 0.1]),
+        "repaired_total_variance": np.array([[0.03, 0.02, 0.025], [np.nan, 0.04, 0.05]]),
+    }
+
+    result = evaluate_surface(surface["log_moneyness"], 1.0, surface)
+
+    np.testing.assert_allclose(result["total_variance"], surface["repaired_total_variance"][0])

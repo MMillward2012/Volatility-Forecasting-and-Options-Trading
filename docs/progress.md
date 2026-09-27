@@ -412,7 +412,8 @@ On the screened 2025-08-29 panel, holding out every fifth strike by expiry gives
 
 - `build_total_variance_grid(...)` evaluates each fitted Raw SVI slice only where $k$ is inside that expiry's observed range, retaining unsupported cells as missing values.
 - `enforce_calendar_monotonicity(...)` applies equal-weight isotonic regression at each $k$ using only the maturities supported there.
-- `evaluate_surface(...)` interpolates repaired total variance in log-moneyness and maturity only where both bracketing expiries support $k$; unsupported requests and extrapolation are rejected.
+- `evaluate_surface(...)` uses the fixed surrounding expiries for a target maturity and only their shared sampled support. Exact fitted maturities use their own support. It rejects unsupported requests rather than switching to more distant expiries as $k$ changes.
+- `count_calendar_crossings(...)` compares consecutive supported maturities at each $k$, including across missing slices.
 
 ### Mathematical logic
 
@@ -422,13 +423,13 @@ $$
 \tilde w_{j+1}(k_\ell)\geq \tilde w_j(k_\ell),\qquad j\in J(k_\ell).
 $$
 
-Between maturities, total variance is interpolated linearly and converted back using $\sigma_{\mathrm{IV}}=\sqrt{w/\tau}$. The repair does not alter or refit the Raw SVI slices. Since it can change smile shape, the notebook also checks sampled butterfly diagnostics on the repaired grid; this is not a guarantee between grid points.
+Between maturities, total variance is interpolated linearly and converted back using $\sigma_{\mathrm{IV}}=\sqrt{w/\tau}$. The repair does not alter or refit the Raw SVI slices. Strike interpolation remains linear in total variance and is not butterfly-safe: convexity violations occur between grid points and around some knots. The notebook now checks normalized Black call prices from the actual evaluator for slope bounds and convexity, including fitted expiries and 30D/60D/90D targets. A change to the surface construction is deferred; the diagnostic does not repair these violations.
 
-On the screened 2025-08-29 panel, support-aware projection on the common $k\in[-0.5,0.25]$ grid removes all 20 sampled crossings where adjacent expiries share quoted support. The maximum supported $|\Delta w|$ is $0.000030$ (median nonzero adjustment $0.000007$), and the maximum IV adjustment is $0.26$ percentage points. The notebook's finite-difference check finds no negative sampled $g(k)$ values on repaired slices. Target-tenor interpolation is limited to $k$ values supported by both surrounding expiries. These sampled checks are diagnostics, not proofs of arbitrage freedom.
+On the screened 2025-08-29 panel, support-aware projection on the common $k\in[-0.5,0.25]$ grid removes all 20 sampled crossings where adjacent expiries share quoted support. Counting consecutive supported maturities across missing slices gives 22 crossings before repair and zero afterward. The maximum supported $|\Delta w|$ is $0.000030$ (median nonzero adjustment $0.000007$), and the maximum IV adjustment is $0.26$ percentage points. The previous finite-difference $g(k)$ check at grid nodes missed violations in the evaluated surface and has been replaced: the call-price check flags 15 of 41 evaluated smiles, while the 30D/60D/90D targets pass this sampled check. Outputs are saved in `notebooks/raw_svi_diagnostics.ipynb`. These sampled checks are diagnostics, not proofs of arbitrage freedom.
 
 ### Tests
 
-`tests/test_vol_surface.py` covers maturity ordering, support-aware isotonic projection, variance-first interpolation, IV conversion, and rejection of unsupported requests or extrapolation.
+`tests/test_vol_surface.py` covers maturity ordering, support-aware isotonic projection, crossing counts across missing slices, variance-first interpolation, IV conversion, fixed expiry brackets, preservation of exact-expiry grid values, and rejection of unsupported requests or extrapolation.
 
 ## `notebooks/ssvi_surface_diagnostics.ipynb`
 

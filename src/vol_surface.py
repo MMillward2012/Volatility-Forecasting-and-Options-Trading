@@ -105,8 +105,17 @@ def enforce_calendar_monotonicity(total_variance_grid):
     return repaired
 
 
+def count_calendar_crossings(total_variance_grid, tolerance=1e-10):
+    """Count decreases between consecutive supported maturities at each k."""
+    values = np.asarray(total_variance_grid, dtype=float)
+    return sum(
+        int(np.count_nonzero(np.diff(column[np.isfinite(column)]) < -tolerance))
+        for column in values.T
+    )
+
+
 def evaluate_surface(k, time_to_expiry, surface_grid):
-    """Interpolate repaired variance only between maturities supporting k."""
+    """Interpolate variance using fixed surrounding expiries and their shared support."""
     k_grid = np.asarray(surface_grid["log_moneyness"], dtype=float)
     maturities = np.asarray(surface_grid["time_to_expiry"], dtype=float)
     support_min = np.asarray(surface_grid["sampled_support_min"], dtype=float)
@@ -139,34 +148,37 @@ def evaluate_surface(k, time_to_expiry, surface_grid):
         raise ValueError("time_to_expiry must be finite and positive.")
     if not np.isfinite(k_values).all():
         raise ValueError("k must contain only finite values.")
+    if tau < maturities[0] or tau > maturities[-1]:
+        raise ValueError("time_to_expiry is not bracketed by fitted expiries.")
+
+    right_index = np.searchsorted(maturities, tau)
+    if maturities[right_index] == tau:
+        maturity_indices = [right_index]
+    else:
+        maturity_indices = [right_index - 1, right_index]
 
     scalar_input = k_values.ndim == 0
     flat_k = k_values.reshape(-1)
-    values = []
-    for k_value in flat_k:
-        if k_value < k_grid[0] or k_value > k_grid[-1]:
-            raise ValueError("k lies outside the common log-moneyness grid.")
-        supported = (support_min <= k_value) & (k_value <= support_max)
-        maturity_indices = np.flatnonzero(supported)
-        if maturity_indices.size == 0:
-            raise ValueError(f"No sampled fitted expiry supports k={k_value}.")
-        supported_maturities = maturities[maturity_indices]
-        if tau < supported_maturities[0] or tau > supported_maturities[-1]:
-            raise ValueError(
-                f"time_to_expiry={tau} is not bracketed by expiries supporting k={k_value}."
-            )
+    if ((flat_k < k_grid[0]) | (flat_k > k_grid[-1])).any():
+        raise ValueError("k lies outside the common log-moneyness grid.")
 
-        supported_variance = []
-        for index in maturity_indices:
-            finite_k = np.isfinite(total_variance[index])
-            supported_variance.append(
-                np.interp(
-                    k_value,
-                    k_grid[finite_k],
-                    total_variance[index, finite_k],
-                )
+    slice_values = []
+    for index in maturity_indices:
+        supported = (support_min[index] <= flat_k) & (flat_k <= support_max[index])
+        if not supported.all():
+            raise ValueError(
+                "k must lie within the sampled support of each surrounding expiry."
             )
-        values.append(np.interp(tau, supported_maturities, supported_variance))
+        finite_k = np.isfinite(total_variance[index])
+        slice_values.append(
+            np.interp(flat_k, k_grid[finite_k], total_variance[index, finite_k])
+        )
+
+    values = slice_values[0]
+    if len(maturity_indices) == 2:
+        near_tau, far_tau = maturities[maturity_indices]
+        weight = (tau - near_tau) / (far_tau - near_tau)
+        values = (1 - weight) * values + weight * slice_values[1]
 
     interpolated_variance = np.asarray(values).reshape(k_values.shape)
     implied_volatility = np.sqrt(interpolated_variance / tau)
