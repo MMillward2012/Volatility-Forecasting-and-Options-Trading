@@ -54,6 +54,10 @@ def test_fit_raw_svi_surface_fits_each_expiry_independently():
     assert len(result["observations"]) == len(rows)
     np.testing.assert_allclose(result["observations"]["residual_w"], 0, atol=1e-8)
 
+    constrained = fit_raw_svi_surface(pd.DataFrame(rows), enforce_arbitrage=True)
+    assert constrained["arbitrage_constrained"]
+    assert len(constrained["parameters_by_expiry"]) == 2
+
 
 def test_fit_raw_svi_surface_requires_five_quotes_per_expiry():
     rows = pd.DataFrame(
@@ -89,3 +93,22 @@ def test_raw_svi_butterfly_diagnostic_flags_negative_variance():
 
     assert not result["nonnegative_total_variance"]
     assert not result["g_nonnegative_on_grid"]
+
+
+def test_raw_svi_butterfly_diagnostic_checks_both_wings():
+    right_violation = raw_svi_butterfly_diagnostic(0.1, 1.2, 0.8, 0.0, 0.2)
+    left_violation = raw_svi_butterfly_diagnostic(0.1, 1.2, -0.8, 0.0, 0.2)
+
+    assert not right_violation["right_wing_condition"]
+    assert right_violation["left_wing_condition"]
+    assert left_violation["right_wing_condition"]
+    assert not left_violation["left_wing_condition"]
+
+
+def test_raw_svi_butterfly_diagnostic_separates_quote_region_from_extrapolation():
+    params = (-0.1, 1.0, 0.0, 0.0, 0.3)
+    quoted = raw_svi_butterfly_diagnostic(*params, np.linspace(-0.3, 0.2, 401))
+    extrapolated = raw_svi_butterfly_diagnostic(*params, np.linspace(-5.0, 5.0, 4001))
+
+    assert quoted["g_nonnegative_on_grid"]
+    assert not extrapolated["g_nonnegative_on_grid"]

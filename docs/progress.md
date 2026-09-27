@@ -377,8 +377,8 @@ The fit minimizes $\sum_i[w_{\mathrm{SSVI}}(k_i,\theta_{j(i)})-w_i^{\mathrm{mark
 ### Implemented
 
 - `raw_svi_total_variance(...)` evaluates the five-parameter Raw SVI slice.
-- `fit_raw_svi_surface(...)` applies the same OTM quote screen as the SSVI fit and calibrates each expiry independently. It returns the per-expiry parameters and fitted-quote residuals; `initial_guess` can be supplied for calibration-stability checks.
-- `raw_svi_butterfly_diagnostic(...)` reports the exact minimum total variance, sampled Durrleman $g(k)$ minimum, and right-wing slope condition for a fitted slice.
+- `fit_raw_svi_surface(...)` applies the same OTM quote screen as the SSVI fit and calibrates each expiry independently. It returns per-expiry parameters and residuals; `initial_guess` supports multi-start checks. `enforce_arbitrage=True` switches to SLSQP with sampled butterfly and wing constraints.
+- `raw_svi_butterfly_diagnostic(...)` reports the exact minimum total variance, sampled Durrleman $g(k)$ minimum, and both wing conditions for a fitted slice.
 
 ### Mathematical logic
 
@@ -388,17 +388,23 @@ $$
 w_j(k)=a_j+b_j\left[\rho_j(k-m_j)+\sqrt{(k-m_j)^2+\sigma_j^2}\right].
 $$
 
-The parameters are fitted by least squares to that expiry's observed total variance. Unlike SSVI, Raw SVI does not share parameters across expiries.
+By default, the parameters are fitted by least squares to that expiry's observed total variance. With `enforce_arbitrage=True`, calibration imposes $b\geq0$, $|\rho|<1$, $\sigma>0$, nonnegative minimum variance, both wing bounds,
+
+$$
+b(1+\rho)<2,\qquad b(1-\rho)<2,
+$$
+
+and $g(k)\geq0$ on an adaptively refined grid covering the quoted range and $[-5,5]$. Unlike SSVI, Raw SVI does not share parameters across expiries.
 
 ### Limitations
 
-The current independent fits are exploratory and do not enforce static-arbitrage constraints across strikes or expiries. Each expiry needs at least five screened observations. Several fits on the current panel reach calibration parameter bounds, so interpret those parameters and their low in-sample errors cautiously.
+The default independent fits are unconstrained with respect to arbitrage. The optional constrained mode samples $g(k)$ on a finite grid, then rechecks a denser grid; it is not a proof over all $k$ and does not test calendar-spread arbitrage. Each expiry needs at least five screened observations. Some calibrated parameters approach their numerical bounds.
 
-On the screened 2025-08-29 panel, holding out every fifth strike by expiry gives equal-expiry mean train/test RMSEs of $0.000120/0.000173$ for Raw SVI and $0.001908/0.002648$ for SSVI. Four different starts on four representative expiries converge to curves within $2.6\times10^{-7}$ total variance of the default-start curves, although some parameters remain near their imposed bounds. Of 38 Raw SVI slices, 10 pass both the sampled butterfly-density and right-wing checks; the rest fail at least one check. These finite-grid results do not prove arbitrage freedom.
+On the screened 2025-08-29 panel, holding out every fifth strike by expiry gives equal-expiry mean test RMSEs of $0.000173$ for Raw SVI and $0.002648$ for a single-expiry SSVI-shaped fit. Four starts on four representative expiries converge to curves within $2.6\times10^{-7}$ total variance of the default-start curves. Of 38 unconstrained slices, 36 pass the sampled $g(k)$ check inside the quoted range, but only 10 pass it on the wide $[-5,5]$ grid; 26 fail only in extrapolation and 2 fail inside the quoted range. The left-wing condition passes all 38, while the right-wing condition passes 20. The arbitrage-aware fits converge for all 38 expiries using up to five starts; equal-expiry mean RMSE rises from $0.000127$ to $0.000221$ versus the current fit. The finite-grid checks do not prove arbitrage freedom.
 
 ### Tests
 
-`tests/test_raw_svi.py` checks the total-variance formula, synthetic per-expiry fitting, the minimum five-observation requirement, and basic butterfly-diagnostic outputs.
+`tests/test_raw_svi.py` checks the total-variance formula, synthetic per-expiry and arbitrage-aware fits, the minimum five-observation requirement, both wing bounds, and quote-range versus extrapolation diagnostics.
 
 ## `notebooks/ssvi_surface_diagnostics.ipynb`
 
@@ -408,7 +414,7 @@ On the screened 2025-08-29 panel, holding out every fifth strike by expiry gives
 - Shows fitted parameters and expiry ATM variances, overlays observed and fitted total variance for representative maturities, plots total-variance residuals, and compares observed IV with fitted expiry slices in 3D. A Plotly mesh of the fitted slices can be rotated in the notebook.
 - Repeats the calibration with all valid OTM IVs before the bid/spread screen, compares the parameters and representative slices, and plots both observed and fitted IV at every unscreened quote location with their fitted surface.
 - Fits Raw SVI separately at each screened expiry and overlays its representative total-variance slices with the shared SSVI fit.
-- Compares interleaved held-out-strike train/test RMSE by expiry, checks multi-start calibration stability on representative expiries, and screens fitted slices for basic butterfly-arbitrage conditions.
+- Compares interleaved held-out-strike train/test RMSE by expiry, checks multi-start calibration stability, distinguishes quoted-range from extrapolation butterfly violations, and compares ordinary and arbitrage-aware Raw SVI fit errors. The held-out SSVI-shaped comparator is calibrated separately for each expiry, not with the global SSVI fit.
 
 ### Limitations
 
