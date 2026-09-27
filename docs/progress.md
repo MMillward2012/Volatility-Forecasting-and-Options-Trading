@@ -377,7 +377,7 @@ The fit minimizes $\sum_i[w_{\mathrm{SSVI}}(k_i,\theta_{j(i)})-w_i^{\mathrm{mark
 ### Implemented
 
 - `raw_svi_total_variance(...)` evaluates the five-parameter Raw SVI slice.
-- `fit_raw_svi_surface(...)` applies the same OTM quote screen as the SSVI fit and calibrates each expiry independently. It returns per-expiry parameters and residuals; `initial_guess` supports multi-start checks. `enforce_arbitrage=True` switches to SLSQP with sampled butterfly and wing constraints.
+- `fit_raw_svi_surface(...)` applies the same OTM quote screen as the SSVI fit and calibrates each expiry independently. It returns per-expiry parameters, maturity, and residuals. `enforce_arbitrage=True` accepts a feasible unconstrained fit or falls back to multiple constrained starts, retaining the best sampled-arbitrage-feasible result.
 - `raw_svi_butterfly_diagnostic(...)` reports the exact minimum total variance, sampled Durrleman $g(k)$ minimum, and both wing conditions for a fitted slice.
 
 ### Mathematical logic
@@ -404,7 +404,31 @@ On the screened 2025-08-29 panel, holding out every fifth strike by expiry gives
 
 ### Tests
 
-`tests/test_raw_svi.py` checks the total-variance formula, synthetic per-expiry and arbitrage-aware fits, the minimum five-observation requirement, both wing bounds, and quote-range versus extrapolation diagnostics.
+`tests/test_raw_svi.py` checks the total-variance formula, synthetic per-expiry and multi-start arbitrage-aware fits, the minimum five-observation requirement, both wing bounds, and quote-range versus extrapolation diagnostics.
+
+## `src/vol_surface.py`
+
+### Implemented
+
+- `build_total_variance_grid(...)` evaluates fitted Raw SVI slices on a common log-moneyness grid and sorts them by maturity.
+- `enforce_calendar_monotonicity(...)` applies equal-weight isotonic regression independently at each $k$, projecting total variance onto nondecreasing maturity sequences.
+- `evaluate_surface(...)` interpolates the repaired total variance in log-moneyness and maturity, then converts it to IV. Extrapolation beyond the supplied grids is rejected.
+
+### Mathematical logic
+
+At every grid point $k_\ell$, the Raw SVI values $w_j(k_\ell)$ are projected to the closest nondecreasing sequence in squared-error distance:
+
+$$
+\tilde w_{j+1}(k_\ell)\geq \tilde w_j(k_\ell).
+$$
+
+Between maturities, total variance is interpolated linearly and converted back using $\sigma_{\mathrm{IV}}=\sqrt{w/\tau}$. The repair is a surface layer; it does not alter or refit the Raw SVI slices, and the pointwise maturity projection is not a guarantee of butterfly arbitrage freedom between grid points.
+
+On the screened 2025-08-29 panel, projection on $k\in[-0.5,0.25]$ removes all 20 sampled calendar crossings in quoted overlap and all 460 crossings on the full grid. The maximum $|\Delta w|$ is $0.000785$ across the full grid and $0.000129$ within quoted coverage. Maximum IV adjustment is 7.03 percentage points on the full grid but 0.90 points within quoted coverage; the larger change is in extrapolation. The finite-grid repair does not guarantee butterfly safety of the repaired slices.
+
+### Tests
+
+`tests/test_vol_surface.py` covers maturity ordering, the isotonic projection, variance-first interpolation, IV conversion, and rejection of extrapolation.
 
 ## `notebooks/ssvi_surface_diagnostics.ipynb`
 
@@ -415,6 +439,7 @@ On the screened 2025-08-29 panel, holding out every fifth strike by expiry gives
 - Repeats the calibration with all valid OTM IVs before the bid/spread screen, compares the parameters and representative slices, and plots both observed and fitted IV at every unscreened quote location with their fitted surface.
 - Fits Raw SVI separately at each screened expiry and overlays its representative total-variance slices with the shared SSVI fit.
 - Compares interleaved held-out-strike train/test RMSE by expiry, checks multi-start calibration stability, distinguishes quoted-range from extrapolation butterfly violations, and compares ordinary and arbitrage-aware Raw SVI fit errors. The held-out SSVI-shaped comparator is calibrated separately for each expiry, not with the global SSVI fit.
+- Projects the arbitrage-aware Raw SVI slices onto a calendar-monotone total-variance grid, compares pre/post calendar crossings and adjustment sizes, and demonstrates 30D/60D/90D interpolation. Representative plots and the 3D view distinguish the raw slices from the repaired grid.
 
 ### Limitations
 

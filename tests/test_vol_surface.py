@@ -1,0 +1,65 @@
+import numpy as np
+import pandas as pd
+import pytest
+
+from src.vol_surface import (
+    build_total_variance_grid,
+    enforce_calendar_monotonicity,
+    evaluate_surface,
+)
+
+
+def test_build_total_variance_grid_orders_slices_by_maturity():
+    parameters = pd.DataFrame(
+        {
+            "time_to_expiry": [0.5, 0.25],
+            "a": [0.02, 0.01],
+            "b": [0.2, 0.1],
+            "rho": [0.0, 0.0],
+            "m": [0.0, 0.0],
+            "sigma": [0.1, 0.1],
+        }
+    )
+
+    grid = build_total_variance_grid(parameters, k_grid=np.array([-0.1, 0.0, 0.1]))
+
+    np.testing.assert_array_equal(grid["time_to_expiry"], [0.25, 0.5])
+    assert grid["raw_total_variance"].shape == (2, 3)
+
+
+def test_calendar_projection_isotonic_and_minimum_squared_adjustment():
+    raw = np.array([[0.02010, 0.01], [0.02002, 0.02], [0.02030, 0.015]])
+
+    repaired = enforce_calendar_monotonicity(raw)
+
+    np.testing.assert_allclose(repaired[:, 0], [0.02006, 0.02006, 0.02030])
+    np.testing.assert_allclose(repaired[:, 1], [0.01, 0.0175, 0.0175])
+    assert (np.diff(repaired, axis=0) >= 0).all()
+
+
+def test_evaluate_surface_interpolates_variance_before_converting_to_iv():
+    surface = {
+        "time_to_expiry": np.array([1.0, 2.0]),
+        "log_moneyness": np.array([0.0, 1.0]),
+        "repaired_total_variance": np.array([[0.04, 0.09], [0.08, 0.13]]),
+    }
+
+    result = evaluate_surface(np.array([0.0, 0.5, 1.0]), 1.5, surface)
+
+    np.testing.assert_allclose(result["total_variance"], [0.06, 0.085, 0.11])
+    np.testing.assert_allclose(
+        result["implied_volatility"], np.sqrt(np.array([0.06, 0.085, 0.11]) / 1.5)
+    )
+
+
+def test_evaluate_surface_rejects_extrapolation():
+    surface = {
+        "time_to_expiry": np.array([1.0, 2.0]),
+        "log_moneyness": np.array([-0.5, 0.25]),
+        "repaired_total_variance": np.array([[0.04, 0.05], [0.06, 0.07]]),
+    }
+
+    with pytest.raises(ValueError, match="maturity range"):
+        evaluate_surface(0.0, 2.1, surface)
+    with pytest.raises(ValueError, match="log-moneyness grid"):
+        evaluate_surface(0.3, 1.5, surface)
