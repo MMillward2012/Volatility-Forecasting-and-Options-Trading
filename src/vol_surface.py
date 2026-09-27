@@ -1,5 +1,6 @@
 import numpy as np
 
+from src.pricing import black_scholes_call_price
 from src.raw_svi import raw_svi_total_variance
 
 
@@ -189,3 +190,83 @@ def evaluate_surface(k, time_to_expiry, surface_grid):
         "total_variance": interpolated_variance,
         "implied_volatility": implied_volatility,
     }
+
+
+def check_surface_quality(time_to_expiry, surface_grid, k_range=None):
+    """Flag unsupported tenors or sampled call-price violations before extracting skew."""
+    tau = float(time_to_expiry)
+    if not np.isfinite(tau) or tau <= 0:
+        raise ValueError("time_to_expiry must be finite and positive.")
+    if k_range is not None:
+        k_range = np.asarray(k_range, dtype=float)
+        if k_range.shape != (2,) or not np.isfinite(k_range).all() or k_range[0] >= k_range[1]:
+            raise ValueError("k_range must contain two finite, increasing bounds.")
+
+    result = {
+        "time_to_expiry": tau,
+        "use_for_skew": False,
+        "failure_reason": "",
+        "k_min": np.nan,
+        "k_max": np.nan,
+        "n_test_strikes": 0,
+        "call_slopes_in_bounds": False,
+        "minimum_slope_change": np.nan,
+        "convexity_violations": np.nan,
+    }
+    maturities = np.asarray(surface_grid["time_to_expiry"])
+    if tau < maturities[0] or tau > maturities[-1]:
+        result["failure_reason"] = "outside_maturity_range"
+        return result
+
+    right = np.searchsorted(maturities, tau)
+    left = right if maturities[right] == tau else right - 1
+    lower = np.max(surface_grid["sampled_support_min"][left:right + 1])
+    upper = np.min(surface_grid["sampled_support_max"][left:right + 1])
+    if not np.isfinite([lower, upper]).all() or lower >= upper:
+        result["failure_reason"] = "insufficient_shared_support"
+        return result
+    if k_range is not None:
+        if k_range[0] < lower or k_range[1] > upper:
+            result["failure_reason"] = "requested_range_not_supported"
+            return result
+        lower, upper = k_range
+    result.update(k_min=float(lower), k_max=float(upper))
+
+    k_grid = np.asarray(surface_grid["log_moneyness"])
+    k_nodes = np.unique(np.r_[lower, k_grid[(k_grid > lower) & (k_grid < upper)], upper])
+    strike_nodes = np.exp(k_nodes)
+    knot_step = 0.001 * np.min(np.diff(strike_nodes))
+    strikes = np.unique(np.concatenate([
+        *[np.linspace(a, b, 21) for a, b in zip(strike_nodes[:-1], strike_nodes[1:])],
+        strike_nodes[1:-1] - knot_step,
+        strike_nodes[1:-1] + knot_step,
+    ]))
+    test_k = np.unique(np.clip(np.log(strikes), lower, upper))
+    evaluated = evaluate_surface(test_k, tau, surface_grid)
+    if (
+        not np.isfinite(evaluated["implied_volatility"]).all()
+        or (evaluated["implied_volatility"] <= 0).any()
+    ):
+        result["failure_reason"] = "invalid_total_variance"
+        return result
+
+    strikes = np.exp(test_k)
+    calls = black_scholes_call_price(1.0, strikes, 1.0, tau, evaluated["implied_volatility"])
+    call_slopes = np.diff(calls) / np.diff(strikes)
+    slope_changes = np.diff(call_slopes)
+    slopes_in_bounds = bool(((call_slopes >= -1 - 1e-8) & (call_slopes <= 1e-8)).all())
+    violations = int((slope_changes < -1e-8).sum())
+    reasons = []
+    if not slopes_in_bounds:
+        reasons.append("call_slope_bounds")
+    if violations:
+        reasons.append("butterfly_convexity")
+    result.update(
+        use_for_skew=not reasons,
+        failure_reason=";".join(reasons),
+        n_test_strikes=len(strikes),
+        call_slopes_in_bounds=slopes_in_bounds,
+        minimum_slope_change=float(slope_changes.min()),
+        convexity_violations=violations,
+    )
+    return result

@@ -4,6 +4,7 @@ import pytest
 
 from src.vol_surface import (
     build_total_variance_grid,
+    check_surface_quality,
     count_calendar_crossings,
     enforce_calendar_monotonicity,
     evaluate_surface,
@@ -136,3 +137,62 @@ def test_exact_expiry_uses_its_own_support_and_preserves_grid_values():
     result = evaluate_surface(surface["log_moneyness"], 1.0, surface)
 
     np.testing.assert_allclose(result["total_variance"], surface["repaired_total_variance"][0])
+
+
+@pytest.fixture
+def quality_surface():
+    return {
+        "time_to_expiry": np.array([30.0, 90.0]) / 365,
+        "log_moneyness": np.array([-0.1, 0.0, 0.1]),
+        "sampled_support_min": np.array([-0.1, -0.1]),
+        "sampled_support_max": np.array([0.1, 0.1]),
+        "repaired_total_variance": np.array([[0.04] * 3, [0.08] * 3]),
+    }
+
+
+def test_surface_quality_accepts_flat_smile_without_changing_values(quality_surface):
+    original = quality_surface["repaired_total_variance"].copy()
+
+    quality = check_surface_quality(60 / 365, quality_surface)
+
+    assert quality["use_for_skew"]
+    assert quality["failure_reason"] == ""
+    assert quality["convexity_violations"] == 0
+    np.testing.assert_array_equal(quality_surface["repaired_total_variance"], original)
+
+
+def test_surface_quality_flags_butterfly_failure(quality_surface):
+    quality_surface["repaired_total_variance"][:, 1] += 0.04
+
+    quality = check_surface_quality(60 / 365, quality_surface)
+
+    assert not quality["use_for_skew"]
+    assert "butterfly_convexity" in quality["failure_reason"]
+    assert quality["convexity_violations"] > 0
+
+
+def test_surface_quality_flags_unavailable_tenor(quality_surface):
+    quality = check_surface_quality(120 / 365, quality_surface)
+
+    assert not quality["use_for_skew"]
+    assert quality["failure_reason"] == "outside_maturity_range"
+
+
+def test_surface_quality_requires_shared_support(quality_surface):
+    quality_surface["sampled_support_min"][1] = np.nan
+
+    quality = check_surface_quality(60 / 365, quality_surface)
+
+    assert not quality["use_for_skew"]
+    assert quality["failure_reason"] == "insufficient_shared_support"
+
+
+def test_surface_quality_checks_requested_skew_range(quality_surface):
+    unsupported = check_surface_quality(60 / 365, quality_surface, k_range=(-0.2, 0.1))
+    supported = check_surface_quality(60 / 365, quality_surface, k_range=(-0.05, 0.05))
+
+    assert not unsupported["use_for_skew"]
+    assert unsupported["failure_reason"] == "requested_range_not_supported"
+    assert supported["use_for_skew"]
+    assert supported["k_min"] == -0.05
+    assert supported["k_max"] == 0.05
