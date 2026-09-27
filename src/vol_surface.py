@@ -4,8 +4,8 @@ from src.raw_svi import raw_svi_total_variance
 
 
 def build_total_variance_grid(parameters_by_expiry, k_grid=None):
-    """Evaluate fitted Raw SVI slices on an ordered common maturity and k grid."""
-    required = ["time_to_expiry", "a", "b", "rho", "m", "sigma"]
+    """Evaluate Raw SVI slices only within each expiry's observed k support."""
+    required = ["time_to_expiry", "k_min", "k_max", "a", "b", "rho", "m", "sigma"]
     missing = set(required) - set(parameters_by_expiry.columns)
     if missing:
         raise ValueError(f"Missing Raw SVI parameter columns: {sorted(missing)}")
@@ -14,10 +14,18 @@ def build_total_variance_grid(parameters_by_expiry, k_grid=None):
 
     parameters = parameters_by_expiry.sort_values("time_to_expiry")
     maturities = parameters["time_to_expiry"].to_numpy(dtype=float)
+    support_min = parameters["k_min"].to_numpy(dtype=float)
+    support_max = parameters["k_max"].to_numpy(dtype=float)
     if not np.isfinite(maturities).all() or (maturities <= 0).any():
         raise ValueError("Maturities must be finite and positive.")
     if np.any(np.diff(maturities) <= 0):
         raise ValueError("Maturities must be unique.")
+    if (
+        not np.isfinite(support_min).all()
+        or not np.isfinite(support_max).all()
+        or (support_min > support_max).any()
+    ):
+        raise ValueError("Each expiry needs finite, ordered observed k bounds.")
 
     if k_grid is None:
         k_grid = np.linspace(-0.5, 0.25, 151)
@@ -27,22 +35,38 @@ def build_total_variance_grid(parameters_by_expiry, k_grid=None):
     if not np.isfinite(k_grid).all() or np.any(np.diff(k_grid) <= 0):
         raise ValueError("k_grid must be finite and strictly increasing.")
 
-    total_variance = np.vstack(
-        [
-            raw_svi_total_variance(
-                k_grid,
+    support_mask = (
+        (k_grid[None, :] >= support_min[:, None])
+        & (k_grid[None, :] <= support_max[:, None])
+    )
+    sampled_support_min = np.full(len(maturities), np.nan)
+    sampled_support_max = np.full(len(maturities), np.nan)
+    for i in range(len(maturities)):
+        supported_k = k_grid[support_mask[i]]
+        if supported_k.size:
+            sampled_support_min[i] = supported_k[0]
+            sampled_support_max[i] = supported_k[-1]
+    raw_variance = np.full(support_mask.shape, np.nan)
+    for i, (_, row) in enumerate(parameters.iterrows()):
+        supported_k = k_grid[support_mask[i]]
+        if supported_k.size:
+            values = raw_svi_total_variance(
+                supported_k,
                 *(row[column] for column in ["a", "b", "rho", "m", "sigma"]),
             )
-            for _, row in parameters.iterrows()
-        ]
-    )
-    if not np.isfinite(total_variance).all() or (total_variance <= 0).any():
-        raise ValueError("Fitted total variance must be finite and positive on k_grid.")
+            if not np.isfinite(values).all() or (values <= 0).any():
+                raise ValueError("Fitted total variance must be finite and positive on its support.")
+            raw_variance[i, support_mask[i]] = values
 
     return {
         "time_to_expiry": maturities,
         "log_moneyness": k_grid,
-        "raw_total_variance": total_variance,
+        "support_min": support_min,
+        "support_max": support_max,
+        "sampled_support_min": sampled_support_min,
+        "sampled_support_max": sampled_support_max,
+        "support_mask": support_mask,
+        "raw_total_variance": raw_variance,
     }
 
 
@@ -64,25 +88,29 @@ def _isotonic_non_decreasing(values):
 
 
 def enforce_calendar_monotonicity(total_variance_grid):
-    """Project each k-column to its closest nondecreasing maturity sequence."""
+    """Apply PAVA at each k using only maturities with finite supported values."""
     total_variance_grid = np.asarray(total_variance_grid, dtype=float)
     if total_variance_grid.ndim != 2 or total_variance_grid.shape[0] == 0:
         raise ValueError("total_variance_grid must be a nonempty 2D array.")
-    if not np.isfinite(total_variance_grid).all():
-        raise ValueError("total_variance_grid must contain only finite values.")
+    if np.isinf(total_variance_grid).any():
+        raise ValueError("total_variance_grid cannot contain infinite values.")
 
-    return np.column_stack(
-        [
-            _isotonic_non_decreasing(total_variance_grid[:, column])
-            for column in range(total_variance_grid.shape[1])
-        ]
-    )
+    repaired = total_variance_grid.copy()
+    for column in range(total_variance_grid.shape[1]):
+        supported = np.isfinite(total_variance_grid[:, column])
+        if supported.any():
+            repaired[supported, column] = _isotonic_non_decreasing(
+                total_variance_grid[supported, column]
+            )
+    return repaired
 
 
 def evaluate_surface(k, time_to_expiry, surface_grid):
-    """Interpolate repaired total variance in k and maturity, then return IV."""
+    """Interpolate repaired variance only between maturities supporting k."""
     k_grid = np.asarray(surface_grid["log_moneyness"], dtype=float)
     maturities = np.asarray(surface_grid["time_to_expiry"], dtype=float)
+    support_min = np.asarray(surface_grid["sampled_support_min"], dtype=float)
+    support_max = np.asarray(surface_grid["sampled_support_max"], dtype=float)
     total_variance = np.asarray(surface_grid["repaired_total_variance"], dtype=float)
     k_values = np.asarray(k, dtype=float)
     tau = float(time_to_expiry)
@@ -103,25 +131,44 @@ def evaluate_surface(k, time_to_expiry, surface_grid):
         raise ValueError("Surface maturities must be finite and increasing.")
     if total_variance.shape != (len(maturities), len(k_grid)):
         raise ValueError("Repaired total-variance grid has an incompatible shape.")
-    if not np.isfinite(total_variance).all() or (total_variance <= 0).any():
-        raise ValueError("Repaired total variance must be finite and positive.")
+    if np.isinf(total_variance).any():
+        raise ValueError("Repaired total variance cannot contain infinite values.")
+    if support_min.shape != maturities.shape or support_max.shape != maturities.shape:
+        raise ValueError("Support bounds must contain one value per maturity.")
     if not np.isfinite(tau) or tau <= 0:
         raise ValueError("time_to_expiry must be finite and positive.")
-    if tau < maturities[0] or tau > maturities[-1]:
-        raise ValueError("time_to_expiry must lie within the fitted maturity range.")
     if not np.isfinite(k_values).all():
         raise ValueError("k must contain only finite values.")
-    if (k_values < k_grid[0]).any() or (k_values > k_grid[-1]).any():
-        raise ValueError("k must lie within the fitted log-moneyness grid.")
 
     scalar_input = k_values.ndim == 0
     flat_k = k_values.reshape(-1)
-    variance_by_maturity = np.vstack(
-        [np.interp(flat_k, k_grid, row) for row in total_variance]
-    )
-    interpolated_variance = np.array(
-        [np.interp(tau, maturities, variance_by_maturity[:, i]) for i in range(len(flat_k))]
-    ).reshape(k_values.shape)
+    values = []
+    for k_value in flat_k:
+        if k_value < k_grid[0] or k_value > k_grid[-1]:
+            raise ValueError("k lies outside the common log-moneyness grid.")
+        supported = (support_min <= k_value) & (k_value <= support_max)
+        maturity_indices = np.flatnonzero(supported)
+        if maturity_indices.size == 0:
+            raise ValueError(f"No sampled fitted expiry supports k={k_value}.")
+        supported_maturities = maturities[maturity_indices]
+        if tau < supported_maturities[0] or tau > supported_maturities[-1]:
+            raise ValueError(
+                f"time_to_expiry={tau} is not bracketed by expiries supporting k={k_value}."
+            )
+
+        supported_variance = []
+        for index in maturity_indices:
+            finite_k = np.isfinite(total_variance[index])
+            supported_variance.append(
+                np.interp(
+                    k_value,
+                    k_grid[finite_k],
+                    total_variance[index, finite_k],
+                )
+            )
+        values.append(np.interp(tau, supported_maturities, supported_variance))
+
+    interpolated_variance = np.asarray(values).reshape(k_values.shape)
     implied_volatility = np.sqrt(interpolated_variance / tau)
     if scalar_input:
         interpolated_variance = float(interpolated_variance)

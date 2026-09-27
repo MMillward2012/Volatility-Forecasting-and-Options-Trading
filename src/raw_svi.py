@@ -236,6 +236,8 @@ def fit_raw_svi_surface(
                 "quote_date": expiry_rows["quote_date"].iloc[0],
                 "expiry_date": expiry,
                 "time_to_expiry": float(expiry_rows["time_to_expiry"].iloc[0]),
+                "k_min": float(k.min()),
+                "k_max": float(k.max()),
                 "a": a,
                 "b": b,
                 "rho": rho,
