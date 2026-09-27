@@ -377,7 +377,8 @@ The fit minimizes $\sum_i[w_{\mathrm{SSVI}}(k_i,\theta_{j(i)})-w_i^{\mathrm{mark
 ### Implemented
 
 - `raw_svi_total_variance(...)` evaluates the five-parameter Raw SVI slice.
-- `fit_raw_svi_surface(...)` applies the same OTM quote screen as the SSVI fit and calibrates each expiry independently. It returns the per-expiry parameters and fitted-quote residuals.
+- `fit_raw_svi_surface(...)` applies the same OTM quote screen as the SSVI fit and calibrates each expiry independently. It returns the per-expiry parameters and fitted-quote residuals; `initial_guess` can be supplied for calibration-stability checks.
+- `raw_svi_butterfly_diagnostic(...)` reports the exact minimum total variance, sampled Durrleman $g(k)$ minimum, and right-wing slope condition for a fitted slice.
 
 ### Mathematical logic
 
@@ -393,9 +394,11 @@ The parameters are fitted by least squares to that expiry's observed total varia
 
 The current independent fits are exploratory and do not enforce static-arbitrage constraints across strikes or expiries. Each expiry needs at least five screened observations. Several fits on the current panel reach calibration parameter bounds, so interpret those parameters and their low in-sample errors cautiously.
 
+On the screened 2025-08-29 panel, holding out every fifth strike by expiry gives equal-expiry mean train/test RMSEs of $0.000120/0.000173$ for Raw SVI and $0.001908/0.002648$ for SSVI. Four different starts on four representative expiries converge to curves within $2.6\times10^{-7}$ total variance of the default-start curves, although some parameters remain near their imposed bounds. Of 38 Raw SVI slices, 10 pass both the sampled butterfly-density and right-wing checks; the rest fail at least one check. These finite-grid results do not prove arbitrage freedom.
+
 ### Tests
 
-`tests/test_raw_svi.py` checks the total-variance formula, synthetic per-expiry fitting, and the minimum five-observation requirement.
+`tests/test_raw_svi.py` checks the total-variance formula, synthetic per-expiry fitting, the minimum five-observation requirement, and basic butterfly-diagnostic outputs.
 
 ## `notebooks/ssvi_surface_diagnostics.ipynb`
 
@@ -405,6 +408,7 @@ The current independent fits are exploratory and do not enforce static-arbitrage
 - Shows fitted parameters and expiry ATM variances, overlays observed and fitted total variance for representative maturities, plots total-variance residuals, and compares observed IV with fitted expiry slices in 3D. A Plotly mesh of the fitted slices can be rotated in the notebook.
 - Repeats the calibration with all valid OTM IVs before the bid/spread screen, compares the parameters and representative slices, and plots both observed and fitted IV at every unscreened quote location with their fitted surface.
 - Fits Raw SVI separately at each screened expiry and overlays its representative total-variance slices with the shared SSVI fit.
+- Compares interleaved held-out-strike train/test RMSE by expiry, checks multi-start calibration stability on representative expiries, and screens fitted slices for basic butterfly-arbitrage conditions.
 
 ### Limitations
 

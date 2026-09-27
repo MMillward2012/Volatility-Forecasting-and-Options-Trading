@@ -9,7 +9,43 @@ def raw_svi_total_variance(k, a, b, rho, m, sigma):
     return a + b * (rho * shifted_k + np.sqrt(shifted_k**2 + sigma**2))
 
 
-def fit_raw_svi_surface(panel, apply_quote_screen=True):
+def raw_svi_butterfly_diagnostic(a, b, rho, m, sigma, k_grid=None):
+    """Check positivity, Durrleman g(k), and the right-wing slope on a grid."""
+    if b < 0 or abs(rho) >= 1 or sigma <= 0:
+        raise ValueError("Raw SVI parameters need b >= 0, |rho| < 1, and sigma > 0.")
+    if k_grid is None:
+        k_grid = np.linspace(-5.0, 5.0, 4001)
+
+    k = np.asarray(k_grid, dtype=float)
+    x = k - m
+    w = raw_svi_total_variance(k, a, b, rho, m, sigma)
+    w_k = b * (rho + x / np.sqrt(x**2 + sigma**2))
+    w_kk = b * sigma**2 / (x**2 + sigma**2) ** 1.5
+    if (w <= 0).any():
+        g = np.full_like(w, np.nan)
+    else:
+        g = (
+            (1 - k * w_k / (2 * w)) ** 2
+            - (w_k**2 / 4) * (1 / w + 1 / 4)
+            + w_kk / 2
+        )
+
+    minimum_w = a + b * sigma * np.sqrt(1 - rho**2)
+    minimum_g_index = int(np.nanargmin(g)) if np.isfinite(g).any() else None
+    minimum_g = float(g[minimum_g_index]) if minimum_g_index is not None else np.nan
+    right_wing_slope = b * (1 + rho)
+    return {
+        "minimum_total_variance": float(minimum_w),
+        "minimum_g_on_grid": minimum_g,
+        "k_at_minimum_g": float(k[minimum_g_index]) if minimum_g_index is not None else np.nan,
+        "right_wing_slope": float(right_wing_slope),
+        "nonnegative_total_variance": bool(minimum_w >= 0),
+        "g_nonnegative_on_grid": bool(minimum_g >= -1e-10),
+        "right_wing_condition": bool(right_wing_slope < 2),
+    }
+
+
+def fit_raw_svi_surface(panel, apply_quote_screen=True, initial_guess=None):
     """Fit an independent five-parameter raw SVI slice for each expiry."""
     if panel.empty or panel["quote_date"].nunique() != 1:
         raise ValueError("panel must contain one nonempty quote date.")
@@ -54,9 +90,16 @@ def fit_raw_svi_surface(panel, apply_quote_screen=True):
             expiry_rows["mid_iv"].to_numpy(dtype=float) ** 2
             * expiry_rows["time_to_expiry"].to_numpy(dtype=float)
         )
+        if initial_guess is None:
+            x0 = [max(float(market_w.min()) - 0.01, -1.0), 0.1, -0.3, 0.0, 0.1]
+        else:
+            x0 = np.asarray(initial_guess, dtype=float)
+            if x0.shape != (5,) or not np.isfinite(x0).all():
+                raise ValueError("initial_guess must contain five finite Raw SVI parameters.")
+
         fit = least_squares(
             lambda params: raw_svi_total_variance(k, *params) - market_w,
-            x0=[max(float(market_w.min()) - 0.01, -1.0), 0.1, -0.3, 0.0, 0.1],
+            x0=x0,
             bounds=(
                 [-1.0, 1e-8, -0.999, -5.0, 1e-8],
                 [1.0, 10.0, 0.999, 5.0, 5.0],

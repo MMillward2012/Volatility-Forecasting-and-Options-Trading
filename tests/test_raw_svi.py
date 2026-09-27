@@ -2,7 +2,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.raw_svi import fit_raw_svi_surface, raw_svi_total_variance
+from src.raw_svi import (
+    fit_raw_svi_surface,
+    raw_svi_butterfly_diagnostic,
+    raw_svi_total_variance,
+)
 
 
 def test_raw_svi_total_variance_matches_formula():
@@ -70,3 +74,18 @@ def test_fit_raw_svi_surface_requires_five_quotes_per_expiry():
 
     with pytest.raises(ValueError, match="at least five quotes"):
         fit_raw_svi_surface(rows)
+
+
+def test_raw_svi_butterfly_diagnostic_checks_safe_slice():
+    result = raw_svi_butterfly_diagnostic(0.01, 0.2, -0.3, 0.0, 0.15)
+
+    assert result["nonnegative_total_variance"]
+    assert result["g_nonnegative_on_grid"]
+    assert result["right_wing_condition"]
+
+
+def test_raw_svi_butterfly_diagnostic_flags_negative_variance():
+    result = raw_svi_butterfly_diagnostic(-0.1, 0.3, 0.5, 0.0, 0.1)
+
+    assert not result["nonnegative_total_variance"]
+    assert not result["g_nonnegative_on_grid"]
