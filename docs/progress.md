@@ -372,6 +372,31 @@ The fit minimizes $\sum_i[w_{\mathrm{SSVI}}(k_i,\theta_{j(i)})-w_i^{\mathrm{mark
 
 `tests/test_ssvi.py` checks recovery of known shared parameters and expiry ATM variances from synthetic smiles, including exclusion of a zero-bid quote.
 
+## `src/raw_svi.py`
+
+### Implemented
+
+- `raw_svi_total_variance(...)` evaluates the five-parameter Raw SVI slice.
+- `fit_raw_svi_surface(...)` applies the same OTM quote screen as the SSVI fit and calibrates each expiry independently. It returns the per-expiry parameters and fitted-quote residuals.
+
+### Mathematical logic
+
+Each expiry $j$ has its own parameters $(a_j,b_j,\rho_j,m_j,\sigma_j)$ and total variance
+
+$$
+w_j(k)=a_j+b_j\left[\rho_j(k-m_j)+\sqrt{(k-m_j)^2+\sigma_j^2}\right].
+$$
+
+The parameters are fitted by least squares to that expiry's observed total variance. Unlike SSVI, Raw SVI does not share parameters across expiries.
+
+### Limitations
+
+The current independent fits are exploratory and do not enforce static-arbitrage constraints across strikes or expiries. Each expiry needs at least five screened observations. Several fits on the current panel reach calibration parameter bounds, so interpret those parameters and their low in-sample errors cautiously.
+
+### Tests
+
+`tests/test_raw_svi.py` checks the total-variance formula, synthetic per-expiry fitting, and the minimum five-observation requirement.
+
 ## `notebooks/ssvi_surface_diagnostics.ipynb`
 
 ### Implemented
@@ -379,6 +404,7 @@ The fit minimizes $\sum_i[w_{\mathrm{SSVI}}(k_i,\theta_{j(i)})-w_i^{\mathrm{mark
 - Loads the 2025-08-29 IV panel and calls `fit_ssvi_surface(...)`.
 - Shows fitted parameters and expiry ATM variances, overlays observed and fitted total variance for representative maturities, plots total-variance residuals, and compares observed IV with fitted expiry slices in 3D. A Plotly mesh of the fitted slices can be rotated in the notebook.
 - Repeats the calibration with all valid OTM IVs before the bid/spread screen, compares the parameters and representative slices, and plots both observed and fitted IV at every unscreened quote location with their fitted surface.
+- Fits Raw SVI separately at each screened expiry and overlays its representative total-variance slices with the shared SSVI fit.
 
 ### Limitations
 
