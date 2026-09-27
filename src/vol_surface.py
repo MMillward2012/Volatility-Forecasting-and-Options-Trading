@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.stats import norm
 
 from src.pricing import black_scholes_call_price
 from src.raw_svi import raw_svi_total_variance
@@ -193,7 +194,7 @@ def evaluate_surface(k, time_to_expiry, surface_grid):
 
 
 def check_surface_quality(time_to_expiry, surface_grid, k_range=None):
-    """Flag unsupported tenors or sampled call-price violations before extracting skew."""
+    """Report sampled call-price slopes and convexity on a requested support range."""
     tau = float(time_to_expiry)
     if not np.isfinite(tau) or tau <= 0:
         raise ValueError("time_to_expiry must be finite and positive.")
@@ -233,15 +234,16 @@ def check_surface_quality(time_to_expiry, surface_grid, k_range=None):
     result.update(k_min=float(lower), k_max=float(upper))
 
     k_grid = np.asarray(surface_grid["log_moneyness"])
-    k_nodes = np.unique(np.r_[lower, k_grid[(k_grid > lower) & (k_grid < upper)], upper])
-    strike_nodes = np.exp(k_nodes)
-    knot_step = 0.001 * np.min(np.diff(strike_nodes))
-    strikes = np.unique(np.concatenate([
-        *[np.linspace(a, b, 21) for a, b in zip(strike_nodes[:-1], strike_nodes[1:])],
-        strike_nodes[1:-1] - knot_step,
-        strike_nodes[1:-1] + knot_step,
-    ]))
-    test_k = np.unique(np.clip(np.log(strikes), lower, upper))
+    k_nodes = k_grid[(k_grid >= lower) & (k_grid <= upper)]
+    knot_step = 0.01 * np.min(np.diff(k_grid))
+    test_k = np.unique(np.r_[
+        np.linspace(lower, upper, 2001),
+        k_nodes,
+        k_nodes[1:-1] - knot_step,
+        k_nodes[1:-1] + knot_step,
+    ])
+    strikes = np.unique(np.exp(test_k))
+    test_k = np.clip(np.log(strikes), lower, upper)
     evaluated = evaluate_surface(test_k, tau, surface_grid)
     if (
         not np.isfinite(evaluated["implied_volatility"]).all()
@@ -250,12 +252,12 @@ def check_surface_quality(time_to_expiry, surface_grid, k_range=None):
         result["failure_reason"] = "invalid_total_variance"
         return result
 
-    strikes = np.exp(test_k)
     calls = black_scholes_call_price(1.0, strikes, 1.0, tau, evaluated["implied_volatility"])
     call_slopes = np.diff(calls) / np.diff(strikes)
     slope_changes = np.diff(call_slopes)
     slopes_in_bounds = bool(((call_slopes >= -1 - 1e-8) & (call_slopes <= 1e-8)).all())
     violations = int((slope_changes < -1e-8).sum())
+    slope_locations = (test_k[:-1] + test_k[1:]) / 2
     reasons = []
     if not slopes_in_bounds:
         reasons.append("call_slope_bounds")
@@ -266,6 +268,10 @@ def check_surface_quality(time_to_expiry, surface_grid, k_range=None):
         failure_reason=";".join(reasons),
         n_test_strikes=len(strikes),
         call_slopes_in_bounds=slopes_in_bounds,
+        minimum_call_slope=float(call_slopes.min()),
+        maximum_call_slope=float(call_slopes.max()),
+        k_at_minimum_call_slope=float(slope_locations[np.argmin(call_slopes)]),
+        k_at_maximum_call_slope=float(slope_locations[np.argmax(call_slopes)]),
         minimum_slope_change=float(slope_changes.min()),
         convexity_violations=violations,
     )

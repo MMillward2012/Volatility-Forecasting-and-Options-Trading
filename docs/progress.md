@@ -414,7 +414,7 @@ On the screened 2025-08-29 panel, holding out every fifth strike by expiry gives
 - `enforce_calendar_monotonicity(...)` applies equal-weight isotonic regression at each $k$ using only the maturities supported there.
 - `evaluate_surface(...)` uses the fixed surrounding expiries for a target maturity and only their shared sampled support. Exact fitted maturities use their own support. It rejects unsupported requests rather than switching to more distant expiries as $k$ changes.
 - `count_calendar_crossings(...)` compares consecutive supported maturities at each $k$, including across missing slices.
-- `check_surface_quality(...)` returns `use_for_skew`, a failure reason, checked moneyness bounds, and sampled call-price diagnostics for one tenor. It checks full shared support by default; an optional `k_range` must be entirely supported.
+- `check_surface_quality(...)` returns `use_for_skew`, a failure reason, checked moneyness bounds, sampled call-price diagnostics, and min/max call slopes with their $k$ locations. It checks full shared support by default; an optional `k_range` must be entirely supported.
 
 ### Mathematical logic
 
@@ -428,11 +428,25 @@ Between maturities, total variance is interpolated linearly and converted back u
 
 The quality gate requires sampled normalized call-price slopes between $-1$ and $0$ and nondecreasing slopes in strike, with tolerance $10^{-8}$. Unsupported maturities or requested moneyness ranges, invalid variances, and failed price checks receive `use_for_skew=False`. The Raw SVI notebook records every 30D/60D/90D target by quote date, retains evaluable failed smiles for inspection, and provides `usable_target_smiles` containing only passing tenors. No skew feature has been defined yet. Historical failure rates and their concentration in volatile periods remain to be assessed; a pass is not a proof of arbitrage freedom.
 
-On the screened 2025-08-29 panel, support-aware projection on the common $k\in[-0.5,0.25]$ grid removes all 20 sampled crossings where adjacent expiries share quoted support. Counting consecutive supported maturities across missing slices gives 22 crossings before repair and zero afterward. The maximum supported $|\Delta w|$ is $0.000030$ (median nonzero adjustment $0.000007$), and the maximum IV adjustment is $0.26$ percentage points. The previous finite-difference $g(k)$ check at grid nodes missed violations in the evaluated surface and has been replaced: the call-price check flags 15 of 41 evaluated smiles, while the 30D/60D/90D targets pass this sampled check. Outputs are saved in `notebooks/raw_svi_diagnostics.ipynb`. These sampled checks are diagnostics, not proofs of arbitrage freedom.
+On the screened 2025-08-29 panel, support-aware projection on the common $k\in[-0.5,0.25]$ grid removes all 20 sampled crossings where adjacent expiries share quoted support. Counting consecutive supported maturities across missing slices gives 22 crossings before repair and zero afterward. The maximum supported $|\Delta w|$ is $0.000030$ (median nonzero adjustment $0.000007$), and the maximum IV adjustment is $0.26$ percentage points. The former finite-difference $g(k)$ check at grid nodes missed violations in the evaluated surface. The call-price check in the Raw SVI notebook flags 15 of 41 evaluated smiles; the later skew diagnostics apply the checks at metric-specific ranges, as described below. These sampled checks are diagnostics, not proofs of arbitrage freedom.
 
 ### Tests
 
 `tests/test_vol_surface.py` covers maturity ordering, support-aware isotonic projection, crossing counts across missing slices, variance-first interpolation, IV conversion, fixed expiry brackets, preservation of exact-expiry grid values, and rejection of unsupported requests or extrapolation. Quality-gate tests cover a passing flat smile, a butterfly failure, unavailable maturities, missing support, requested moneyness ranges, and unchanged input values.
+
+## `src/skew_metrics.py`
+
+### Implemented
+
+- `calculate_skew_metrics(...)` extracts 30D/60D/90D repaired smiles and calculates ATM IV, a centered ATM downside-skew slope, and a 25-delta downside risk reversal.
+- It reports independent `atm_valid`, `slope_valid`, and `rr25_valid` flags and reasons. Full-smile `surface_valid` and `convexity_valid` are reported separately; they do not suppress otherwise valid metric values.
+- 25-delta strikes use unadjusted Black forward deltas and require a unique OTM root on each wing. ATM slope uses the centered difference at $k=\pm0.01$, reported as volatility points per 1% change in $k$.
+
+The downside-skew slope is $-[\sigma(0.01)-\sigma(-0.01)]/0.02$. The downside 25-delta risk reversal is $\sigma_{25\Delta\,put}-\sigma_{25\Delta\,call}$. A positive value for either indicates higher put-side volatility.
+
+### Tests and diagnostics
+
+`tests/test_skew_metrics.py` checks flat-smile metrics, positive downside-skew signs, and that an unsupported wing does not invalidate supported ATM IV or slope. `notebooks/skew_metrics_diagnostics.ipynb` plots the target smiles with 25-delta markers and reports metrics and quality flags. On the 2025-08-29 sample, all three ATM, local-slope, and 25-delta metrics pass; the full-support convexity check fails for 30D and 90D. The refined call-slope diagnostic reports in-range extrema for investigation.
 
 ## `notebooks/ssvi_surface_diagnostics.ipynb`
 
