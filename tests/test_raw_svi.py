@@ -59,6 +59,41 @@ def test_fit_raw_svi_surface_fits_each_expiry_independently():
     assert len(constrained["parameters_by_expiry"]) == 2
 
 
+def test_arbitrage_aware_fit_uses_feasible_multistart_candidate():
+    tau = 0.25
+    market_params = (0.02, 2.4, 0.0, 0.0, 0.2)
+    rows = []
+    for k in np.linspace(-0.3, 0.3, 31):
+        market_w = raw_svi_total_variance(k, *market_params)
+        rows.append(
+            {
+                "security_id": 108105,
+                "quote_date": "2025-08-29",
+                "expiry_date": "2025-11-28",
+                "time_to_expiry": tau,
+                "log_moneyness": k,
+                "mid_iv": np.sqrt(market_w / tau),
+                "best_bid": 1.0,
+                "best_ask": 1.2,
+                "mid_price": 1.1,
+                "relative_spread": 0.2 / 1.1,
+                "use_for_surface": True,
+            }
+        )
+
+    panel = pd.DataFrame(rows)
+    unconstrained = fit_raw_svi_surface(panel)["parameters_by_expiry"].iloc[0]
+    constrained = fit_raw_svi_surface(panel, enforce_arbitrage=True)[
+        "parameters_by_expiry"
+    ].iloc[0]
+
+    assert unconstrained["b"] * (1 + abs(unconstrained["rho"])) > 2
+    assert constrained["feasible_starts"] > 1
+    assert constrained["b"] * (1 + constrained["rho"]) < 2
+    assert constrained["b"] * (1 - constrained["rho"]) < 2
+    assert constrained["rmse"] > unconstrained["rmse"]
+
+
 def test_fit_raw_svi_surface_requires_five_quotes_per_expiry():
     rows = pd.DataFrame(
         {

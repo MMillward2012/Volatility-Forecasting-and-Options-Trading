@@ -103,9 +103,7 @@ def fit_raw_svi_surface(
             expiry_rows["mid_iv"].to_numpy(dtype=float) ** 2
             * expiry_rows["time_to_expiry"].to_numpy(dtype=float)
         )
-        if initial_guess is None and enforce_arbitrage:
-            x0 = [market_w.min() - 0.001, 0.01, 0.0, 0.0, 0.1]
-        elif initial_guess is None:
+        if initial_guess is None:
             x0 = [max(float(market_w.min()) - 0.01, -1.0), 0.1, -0.3, 0.0, 0.1]
         else:
             x0 = np.asarray(initial_guess, dtype=float)
@@ -115,47 +113,108 @@ def fit_raw_svi_surface(
         lower = [-1.0, 1e-8, -0.999, -5.0, 1e-8]
         upper = [1.0, 10.0, 0.999, 5.0, 5.0]
         residuals = lambda params: raw_svi_total_variance(k, *params) - market_w
+        feasible_starts = np.nan
         if enforce_arbitrage:
             dense_grid = np.linspace(-5.0, 5.0, 4001)
-            constraint_grid = np.unique(
-                np.concatenate(
-                    [
-                        np.linspace(-5.0, 5.0, 1001),
-                        np.linspace(k.min(), k.max(), 301),
-                        k,
-                    ]
-                )
+            base_constraint_grid = np.unique(
+                np.concatenate([np.linspace(-5.0, 5.0, 1001), np.linspace(k.min(), k.max(), 301), k])
             )
 
             def minimum_variance(params):
                 a, b, rho, _, sigma = params
                 return a + b * sigma * np.sqrt(1 - rho**2)
 
+            def passes_arbitrage_checks(params):
+                a, b, rho, m, sigma = params
+                wide = raw_svi_butterfly_diagnostic(a, b, rho, m, sigma, dense_grid)
+                quoted = raw_svi_butterfly_diagnostic(
+                    a, b, rho, m, sigma, np.linspace(k.min(), k.max(), 401)
+                )
+                return (
+                    wide["nonnegative_total_variance"]
+                    and wide["minimum_g_on_grid"] >= -1e-8
+                    and wide["right_wing_condition"]
+                    and wide["left_wing_condition"]
+                    and quoted["minimum_g_on_grid"] >= -1e-8
+                )
+
             scale = max(float(np.sqrt(np.mean(market_w**2))), 1e-8)
-            for _ in range(4):
-                constraints = [
-                    {"type": "ineq", "fun": lambda p: minimum_variance(p) - 1e-12},
-                    {"type": "ineq", "fun": lambda p: 2 - p[1] * (1 + p[2]) - 1e-8},
-                    {"type": "ineq", "fun": lambda p: 2 - p[1] * (1 - p[2]) - 1e-8},
-                    {"type": "ineq", "fun": lambda p: _raw_svi_g(constraint_grid, p)},
+            baseline = least_squares(
+                residuals,
+                x0=x0,
+                bounds=(lower, upper),
+                max_nfev=10000,
+            )
+            candidate_fits = []
+            if baseline.success and passes_arbitrage_checks(baseline.x):
+                candidate_fits.append(baseline)
+            else:
+                minimum_w = float(market_w.min())
+                starts = [
+                    ("baseline", baseline.x if baseline.success else x0),
+                    *[
+                        (
+                            f"start_{i}",
+                            [
+                                minimum_w - b * sigma * np.sqrt(1 - rho**2),
+                                b,
+                                rho,
+                                0.0,
+                                sigma,
+                            ],
+                        )
+                        for i, (b, rho, sigma) in enumerate(
+                            [(0.01, 0.0, 0.1), (0.03, -0.8, 0.05), (0.15, 0.0, 0.2), (0.3, 0.7, 0.35)],
+                            start=1,
+                        )
+                    ],
                 ]
-                fit = minimize(
-                    lambda params: np.mean((residuals(params) / scale) ** 2),
-                    x0=x0,
-                    method="SLSQP",
-                    bounds=list(zip(lower, upper)),
-                    constraints=constraints,
-                    options={"maxiter": 1000, "ftol": 1e-10},
-                )
-                if not fit.success:
-                    break
-                dense_g = _raw_svi_g(dense_grid, fit.x)
-                if np.nanmin(dense_g) >= -1e-8:
-                    break
-                constraint_grid = np.unique(
-                    np.concatenate([constraint_grid, dense_grid[dense_g < -1e-8]])
-                )
-                x0 = fit.x
+                if initial_guess is not None:
+                    starts.insert(0, ("provided", x0))
+
+                for _, start in starts:
+                    constraint_grid = base_constraint_grid.copy()
+                    start_fit = None
+                    for _ in range(4):
+                        constraints = [
+                            {"type": "ineq", "fun": lambda p: minimum_variance(p) - 1e-12},
+                            {"type": "ineq", "fun": lambda p: 2 - p[1] * (1 + p[2]) - 1e-8},
+                            {"type": "ineq", "fun": lambda p: 2 - p[1] * (1 - p[2]) - 1e-8},
+                            {"type": "ineq", "fun": lambda p: _raw_svi_g(constraint_grid, p)},
+                        ]
+                        start_fit = minimize(
+                            lambda params: np.mean((residuals(params) / scale) ** 2),
+                            x0=start,
+                            method="SLSQP",
+                            bounds=list(zip(lower, upper)),
+                            constraints=constraints,
+                            options={"maxiter": 1000, "ftol": 1e-10},
+                        )
+                        if not start_fit.success:
+                            break
+                        dense_g = _raw_svi_g(dense_grid, start_fit.x)
+                        if np.isfinite(dense_g).all() and np.min(dense_g) >= -1e-8:
+                            break
+                        constraint_grid = np.unique(
+                            np.concatenate([constraint_grid, dense_grid[dense_g < -1e-8]])
+                        )
+                        start = start_fit.x
+                    if (
+                        start_fit is not None
+                        and start_fit.success
+                        and passes_arbitrage_checks(start_fit.x)
+                    ):
+                        candidate_fits.append(start_fit)
+                if not candidate_fits:
+                    raise ValueError(
+                        f"Arbitrage-aware Raw SVI calibration failed for {expiry}: "
+                        "none of the multi-start fits passed the sampled checks."
+                    )
+            feasible_starts = len(candidate_fits)
+            fit = min(
+                candidate_fits,
+                key=lambda candidate: float(np.mean(residuals(candidate.x) ** 2)),
+            )
         else:
             fit = least_squares(
                 residuals,
@@ -167,24 +226,6 @@ def fit_raw_svi_surface(
             raise ValueError(f"Raw SVI calibration failed for {expiry}: {fit.message}")
 
         a, b, rho, m, sigma = fit.x
-        if enforce_arbitrage:
-            dense_checks = raw_svi_butterfly_diagnostic(a, b, rho, m, sigma, dense_grid)
-            quoted_checks = raw_svi_butterfly_diagnostic(
-                a, b, rho, m, sigma, np.linspace(k.min(), k.max(), 401)
-            )
-            if (
-                not dense_checks["nonnegative_total_variance"]
-                or dense_checks["minimum_g_on_grid"] < -1e-8
-                or not dense_checks["right_wing_condition"]
-                or not dense_checks["left_wing_condition"]
-                or quoted_checks["minimum_g_on_grid"] < -1e-8
-            ):
-                raise ValueError(
-                    f"Raw SVI fit for {expiry} failed dense arbitrage checks: "
-                    f"min g={dense_checks['minimum_g_on_grid']:.3g}, "
-                    f"left slope={dense_checks['left_wing_slope']:.3g}, "
-                    f"right slope={dense_checks['right_wing_slope']:.3g}."
-                )
         expiry_rows = expiry_rows.copy()
         expiry_rows["market_w"] = market_w
         expiry_rows["fitted_w"] = raw_svi_total_variance(k, *fit.x)
@@ -200,6 +241,7 @@ def fit_raw_svi_surface(
                 "m": m,
                 "sigma": sigma,
                 "rmse": float(np.sqrt(np.mean(expiry_rows["residual_w"] ** 2))),
+                "feasible_starts": feasible_starts,
             }
         )
 
