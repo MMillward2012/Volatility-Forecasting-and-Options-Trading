@@ -496,6 +496,33 @@ Matching aligns $C(K)$ and $P(K)$ for the same security, quote date, and expiry.
 
 `tests/test_option_matching.py` covers output schema, value preservation, complete pairs, exclusion of mismatched keys, duplicate and missing key rejection, preservation of the expiry-day flag, and unchanged input data. Its small in-memory fixture is test-only.
 
+## `src/historical_pipeline.py`
+
+### Implemented
+
+- Reads annual raw CSVs in chunks, retaining complete dates across chunk boundaries.
+- Validates SPX constants, selects PM rows, drops crossed quotes, then calls the existing
+  cleaning, matching, forward, IV, arbitrage-aware Raw SVI, calendar-repair, and skew APIs.
+- Saves three metric rows and one diagnostics row per date. Date failures are recorded;
+  failed SVI expiries retain unsupported grid slots so interpolation cannot bridge them.
+  Partial dates retain metrics whose required expiries fitted successfully.
+- Keeps large intermediates in memory and checkpoints the two small CSV outputs after
+  every date. Supports resume, failed-date retries, and selected date ranges.
+
+### Mathematical logic
+
+Reuses the existing definitions and default settings throughout. ATM downside skew slope
+is the primary target, 25-delta downside RR is the trading-oriented robustness measure,
+and ATM IV is a state/control variable. Metric-specific validity remains independent of
+full-smile QC. See [Historical processing](historical_processing.md) for commands,
+failure policy, output fields, and checkpoint limitations.
+
+### Tests
+
+`tests/test_historical_pipeline.py` covers chunk boundaries, input ordering, SPX constants,
+early quote filtering, a synthetic run through the existing models, failed SVI expiry
+handling, continuation after a date failure, resume/retry, and interrupted checkpoints.
+
 ## Test suite
 
 The current test suite covers:
