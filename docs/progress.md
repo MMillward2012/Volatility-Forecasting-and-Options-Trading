@@ -503,11 +503,17 @@ Matching aligns $C(K)$ and $P(K)$ for the same security, quote date, and expiry.
 - Reads annual raw CSVs in chunks, retaining complete dates across chunk boundaries.
 - Validates SPX constants, selects PM rows, drops crossed quotes, then calls the existing
   cleaning, matching, forward, IV, arbitrage-aware Raw SVI, calendar-repair, and skew APIs.
-- Saves three metric rows and one diagnostics row per date. Date failures are recorded;
-  failed SVI expiries retain unsupported grid slots so interpolation cannot bridge them.
-  Partial dates retain metrics whose required expiries fitted successfully.
+- Saves three metric rows and one diagnostics row per date. Date and expiry failures
+  are recorded. Target tenors use nearest accepted fits with a maximum 30-calendar-day
+  gap; exact accepted maturities have zero gap. Records bracket dates, gap and skipped
+  expiry count. Both endpoints must still support each metric's required strikes.
 - Keeps large intermediates in memory and checkpoints the two small CSV outputs after
   every date. Supports resume, failed-date retries, and selected date ranges.
+- Uses 14-180 DTE expiries for SVI and calendar repair. Rejects fits whose ATM IV differs
+  from the interpolated screened-quote benchmark by more than the larger of 0.03 and 20%.
+- Records raw/repaired target ATM IVs and invalidates all three research metrics for a
+  tenor if calendar repair changes its ATM IV by more than 0.05. Pre-guard values remain
+  in diagnostics. Rejected expiries are excluded from brackets. Older checkpoints are invalidated.
 
 ### Mathematical logic
 
@@ -522,6 +528,12 @@ failure policy, output fields, and checkpoint limitations.
 `tests/test_historical_pipeline.py` covers chunk boundaries, input ordering, SPX constants,
 early quote filtering, a synthetic run through the existing models, failed SVI expiry
 handling, continuation after a date failure, resume/retry, and interrupted checkpoints.
+It also checks maturity bounds, ATM benchmarks/tolerances, skipping rejected expiries,
+the inclusive 30-day bracket limit, exact maturities, support checks, unchanged metrics
+on accepted brackets, tenor-specific repair guards, and checkpoint versioning.
+Seven targeted real dates, including the two prior outliers and 2025-08-29, retain
+all 21 tenor rows with valid metrics and numerical agreement within $10^{-12}$ with
+the preceding guarded results. Coverage recovery across failed fits is tested synthetically.
 
 ## Test suite
 
