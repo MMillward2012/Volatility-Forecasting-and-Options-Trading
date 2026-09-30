@@ -574,6 +574,38 @@ preservation, CSV loading, target arithmetic at all three horizons, missing endp
 missing intermediate values, final-horizon rows, and absent trading dates in the supplied
 canonical sequence.
 
+## `src/market_state.py`
+
+### Implemented
+
+- `load_market_state(spx_path, vix_path)` reads separate per-security price CSVs.
+  Inputs require `date` and `close`; an optional OptionMetrics `return` is retained
+  as `spx_vendor_return` for comparison only. An SPX extract with `secid` is checked
+  against the project's SPX identifier, 108105.
+- `build_market_state(...)` sorts and aligns prices by the union of SPX and VIX dates.
+  It calculates `spx_return` from adjacent SPX closes as
+  $r_t=\log(S_t/S_{t-1})$, then adds $|r_t|$ and $r_t^2$. The optional vendor return
+  does not enter any calculated feature.
+- `rv_5` and `rv_20` are annualized rolling realized volatility:
+
+  $$
+  RV_{h,t}=\sqrt{\frac{252}{h}\sum_{j=0}^{h-1}r_{t-j}^2},
+  \qquad h\in\{5,20\}.
+  $$
+
+  Each window requires all of its returns. A missing SPX date present in the VIX extract
+  remains an empty SPX row, so returns and rolling windows do not bridge it. VIX closes
+  are joined on the exact date and never forward-filled.
+- `merge_market_state(daily_surface, market_state)` left-joins on date while retaining
+  the surface date rows. Thus SPX dates used only for pre-sample RV warm-up do not appear
+  in the merged surface dataset.
+
+### Tests
+
+`tests/test_market_state.py` checks close-based log-return arithmetic, RV5/RV20 windows,
+missing-SPX-date handling, exact-date SPX/VIX alignment without VIX filling, CSV loading,
+and preservation of surface dates when warm-up-only rows are merged.
+
 ## `notebooks/skew_time_series_analysis.ipynb`
 
 ### Implemented
@@ -600,6 +632,7 @@ The current test suite covers:
 - Synthetic global SSVI parameter and expiry ATM-variance recovery.
 - Call-put matching and key validation.
 - QC-aware daily time-series construction and fixed 1/5/10-session forward targets.
+- SPX/VIX market-state returns, rolling realized volatility, and date alignment.
 
 Run the suite with:
 
