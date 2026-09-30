@@ -535,6 +535,57 @@ Seven targeted real dates, including the two prior outliers and 2025-08-29, reta
 all 21 tenor rows with valid metrics and numerical agreement within $10^{-12}$ with
 the preceding guarded results. Coverage recovery across failed fits is tested synthetically.
 
+## `src/time_series.py`
+
+### Implemented
+
+- `load_skew_metrics(...)` loads the long-form historical metrics CSV with parsed quote dates.
+- `build_daily_time_series(...)` creates one sorted row per quote date. It masks ATM skew
+  slope, downside 25-delta RR, and ATM IV using their respective validity flags; nonfinite
+  values become missing. It adds adjacent-row daily changes and 30D–60D / 60D–90D
+  differences for each metric. Missing values are not forward-filled.
+- `add_forward_targets(daily, canonical_quote_dates)` adds fixed 1-, 5-, and 10-session
+  endpoint changes:
+
+  $$
+  y^{\mathrm{spread}}_{t,h}=(S^{30}_{t+h}-S^{60}_{t+h})-(S^{30}_t-S^{60}_t),
+  \qquad
+  y^{30}_{t,h}=S^{30}_{t+h}-S^{30}_t,
+  $$
+  $$
+  y^{\mathrm{RRspread}}_{t,h}=(RR^{25,30}_{t+h}-RR^{25,60}_{t+h})
+  -(RR^{25,30}_t-RR^{25,60}_t).
+  $$
+
+  The caller supplies the complete, sorted quote-date sequence. Missing dates are inserted
+  before calculating endpoints, so an absent date cannot shorten a horizon. Only valid
+  start/end values are required; intermediate missing observations do not invalidate an
+  endpoint-to-endpoint target. The final $h$ dates have missing targets. No values are filled.
+
+The primary target is the 5-session change in 30D–60D skew spread. The 5-session change in
+30D skew is the secondary benchmark, and the 5-session 30D–60D RR25 spread change is the
+tradability check. The 1- and 10-session versions are robustness horizons.
+
+### Tests
+
+`tests/test_time_series.py` covers QC masking and long-to-wide construction, adjacent-row
+changes, term structure differences, missing observations, duplicate keys, input
+preservation, CSV loading, target arithmetic at all three horizons, missing endpoints,
+missing intermediate values, final-horizon rows, and absent trading dates in the supplied
+canonical sequence.
+
+## `notebooks/skew_time_series_analysis.ipynb`
+
+### Implemented
+
+Uses `build_daily_time_series(...)` to plot skew levels, daily changes, and skew term
+structure; summarizes level/change distributions; reports lag 1–10 autocorrelation and
+paired counts; compares tenor correlations; checks contemporaneous 30D skew / ATM IV and
+skew / RR25 relationships; and reports QC coverage by metric and tenor. It contains no
+forecasting model. The saved notebook outputs currently show a partial 73-date sample
+through 2023-04-18; rerun the notebook after the historical pipeline completes to refresh
+the results from the full CSV.
+
 ## Test suite
 
 The current test suite covers:
@@ -548,6 +599,7 @@ The current test suite covers:
 - IV-panel construction, midpoint IV recovery, surface eligibility, and missing-forward validation.
 - Synthetic global SSVI parameter and expiry ATM-variance recovery.
 - Call-put matching and key validation.
+- QC-aware daily time-series construction and fixed 1/5/10-session forward targets.
 
 Run the suite with:
 

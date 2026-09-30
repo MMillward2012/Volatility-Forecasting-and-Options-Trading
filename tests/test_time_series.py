@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.time_series import build_daily_time_series, load_skew_metrics
+from src.time_series import add_forward_targets, build_daily_time_series, load_skew_metrics
 
 
 def long_metrics():
@@ -127,3 +127,83 @@ def test_csv_loader_reads_quote_dates(tmp_path):
     loaded = load_skew_metrics(path)
     assert pd.api.types.is_datetime64_any_dtype(loaded["quote_date"])
     assert len(loaded) == 9
+
+
+def daily_target_fixture(periods=12):
+    dates = pd.bdate_range("2025-01-02", periods=periods)
+    step = np.arange(periods, dtype=float)
+    daily = pd.DataFrame({
+        "quote_date": dates,
+        "skew_30": 0.30 + 0.10 * step,
+        "skew_60": 0.20 + 0.04 * step,
+        "skew_30_60": 0.10 + 0.06 * step,
+        "rr25_30": 0.25 + 0.08 * step,
+        "rr25_60": 0.15 + 0.03 * step,
+        "rr25_30_60": 0.10 + 0.05 * step,
+    })
+    return daily, dates
+
+
+def test_forward_targets_use_fixed_one_five_and_ten_session_horizons():
+    daily, dates = daily_target_fixture()
+
+    result = add_forward_targets(daily, dates)
+
+    assert result.quote_date.tolist() == dates.tolist()
+    for horizon in (1, 5, 10):
+        assert result.loc[0, f"y_skew_spread_{horizon}d"] == pytest.approx(0.06 * horizon)
+        assert result.loc[0, f"y_skew_30_{horizon}d"] == pytest.approx(0.10 * horizon)
+        assert result.loc[0, f"y_rr25_spread_{horizon}d"] == pytest.approx(0.05 * horizon)
+
+
+def test_missing_endpoint_makes_only_dependent_targets_missing():
+    daily, dates = daily_target_fixture()
+    daily.loc[1, "skew_30"] = np.nan
+    daily.loc[1, "skew_30_60"] = np.nan
+    daily.loc[1, "rr25_30_60"] = np.nan
+
+    result = add_forward_targets(daily, dates)
+
+    assert np.isnan(result.loc[0, "y_skew_spread_1d"])
+    assert np.isnan(result.loc[0, "y_skew_30_1d"])
+    assert np.isnan(result.loc[0, "y_rr25_spread_1d"])
+    assert np.isfinite(result.loc[0, "y_skew_spread_5d"])
+    assert np.isfinite(result.loc[0, "y_skew_30_5d"])
+    assert np.isfinite(result.loc[0, "y_rr25_spread_5d"])
+
+
+def test_missing_intermediate_metric_does_not_break_valid_endpoint_target():
+    daily, dates = daily_target_fixture()
+    daily.loc[2, ["skew_30", "skew_30_60", "rr25_30_60"]] = np.nan
+
+    result = add_forward_targets(daily, dates)
+
+    assert result.loc[0, "y_skew_spread_5d"] == pytest.approx(0.30)
+    assert result.loc[0, "y_skew_30_5d"] == pytest.approx(0.50)
+    assert result.loc[0, "y_rr25_spread_5d"] == pytest.approx(0.25)
+
+
+def test_final_rows_without_future_endpoints_are_missing():
+    daily, dates = daily_target_fixture()
+
+    result = add_forward_targets(daily, dates)
+
+    for horizon in (1, 5, 10):
+        columns = [
+            f"y_skew_spread_{horizon}d", f"y_skew_30_{horizon}d",
+            f"y_rr25_spread_{horizon}d",
+        ]
+        assert result.tail(horizon)[columns].isna().all().all()
+
+
+def test_absent_trading_date_is_inserted_and_does_not_shorten_horizon():
+    daily, dates = daily_target_fixture()
+    daily = daily.drop(index=2).reset_index(drop=True)
+
+    result = add_forward_targets(daily, dates)
+
+    assert result.quote_date.tolist() == dates.tolist()
+    assert result.loc[2, "quote_date"] == dates[2]
+    assert np.isnan(result.loc[2, "skew_30"])
+    assert np.isnan(result.loc[1, "y_skew_30_1d"])
+    assert result.loc[1, "y_skew_30_5d"] == pytest.approx(0.50)

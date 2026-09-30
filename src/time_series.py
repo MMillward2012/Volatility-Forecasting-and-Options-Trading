@@ -12,6 +12,7 @@ METRICS = {
     "atm_iv": ("atm_valid", "atm_iv"),
 }
 TENORS = (30, 60, 90)
+FORWARD_HORIZONS = (1, 5, 10)
 
 
 def load_skew_metrics(path):
@@ -59,3 +60,45 @@ def build_daily_time_series(metrics):
 
     result.index.name = "quote_date"
     return result.reset_index()
+
+
+def add_forward_targets(daily, canonical_quote_dates):
+    """Add fixed 1/5/10-session targets using an explicit trading-date calendar.
+
+    The canonical calendar must contain every session in the period. It may include
+    dates absent from ``daily``; those dates are inserted with missing values so a
+    target can never silently shorten its horizon.
+    """
+    required = {"quote_date", "skew_30", "skew_30_60", "rr25_30_60"}
+    missing = required - set(daily.columns)
+    if missing:
+        raise ValueError(f"Missing required daily-series columns: {sorted(missing)}")
+
+    rows = daily.copy()
+    rows["quote_date"] = pd.to_datetime(rows["quote_date"], errors="raise")
+    if rows["quote_date"].isna().any():
+        raise ValueError("daily quote_date cannot be missing.")
+    if rows["quote_date"].duplicated().any():
+        raise ValueError("daily quote_date values must be unique.")
+
+    dates = pd.DatetimeIndex(pd.to_datetime(canonical_quote_dates, errors="raise"))
+    if dates.isna().any() or dates.empty:
+        raise ValueError("canonical_quote_dates must be nonempty and contain no missing dates.")
+    if dates.has_duplicates or not dates.is_monotonic_increasing:
+        raise ValueError("canonical_quote_dates must be unique and chronologically sorted.")
+    if not rows["quote_date"].isin(dates).all():
+        raise ValueError("Every daily quote date must appear in canonical_quote_dates.")
+
+    aligned = rows.set_index("quote_date").reindex(dates)
+    target_sources = {
+        "y_skew_spread": "skew_30_60",
+        "y_skew_30": "skew_30",
+        "y_rr25_spread": "rr25_30_60",
+    }
+    for target, source in target_sources.items():
+        values = pd.to_numeric(aligned[source], errors="coerce")
+        for horizon in FORWARD_HORIZONS:
+            aligned[f"{target}_{horizon}d"] = values.shift(-horizon) - values
+
+    aligned.index.name = "quote_date"
+    return aligned.reset_index()
