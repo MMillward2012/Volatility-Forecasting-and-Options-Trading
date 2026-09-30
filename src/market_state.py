@@ -8,7 +8,7 @@ SPX_SECURITY_ID = 108105
 TRADING_DAYS_PER_YEAR = 252
 
 
-def _prepare_prices(prices, name, expected_secid=None):
+def _prepare_prices(prices, name, expected_secid=None, expected_ticker=None):
     required = {"date", "close"}
     missing = required - set(prices.columns)
     if missing:
@@ -16,9 +16,12 @@ def _prepare_prices(prices, name, expected_secid=None):
     for identifier in ("secid", "ticker"):
         if identifier in prices and prices[identifier].nunique(dropna=False) > 1:
             raise ValueError(f"{name} extract must contain only one {identifier}.")
-    if "secid" in prices and expected_secid is not None:
-        if not prices["secid"].eq(expected_secid).fillna(False).all():
+    if expected_secid is not None:
+        if "secid" not in prices or not prices["secid"].eq(expected_secid).fillna(False).all():
             raise ValueError(f"{name} prices must have secid={expected_secid}.")
+    if expected_ticker is not None:
+        if "ticker" not in prices or not prices["ticker"].eq(expected_ticker).fillna(False).all():
+            raise ValueError(f"{name} prices must have ticker={expected_ticker}.")
 
     columns = ["date", "close"]
     has_vendor_return = "return" in prices.columns
@@ -39,6 +42,14 @@ def _prepare_prices(prices, name, expected_secid=None):
     return result.sort_values("date").reset_index(drop=True)
 
 
+def spx_trading_dates(spx_prices):
+    """Return the sessions in the SPX security-price extract."""
+    spx = _prepare_prices(
+        spx_prices, "SPX", expected_secid=SPX_SECURITY_ID, expected_ticker="SPX"
+    )
+    return pd.DatetimeIndex(spx["date"])
+
+
 def build_market_state(spx_prices, vix_prices):
     """Build daily SPX log-return/RV measures and align same-date VIX closes.
 
@@ -46,8 +57,10 @@ def build_market_state(spx_prices, vix_prices):
     OptionMetrics' optional return is retained as spx_vendor_return only for
     comparison; all calculated returns and realized volatility use SPX closes.
     """
-    spx = _prepare_prices(spx_prices, "SPX", expected_secid=SPX_SECURITY_ID)
-    vix = _prepare_prices(vix_prices, "VIX")
+    spx = _prepare_prices(
+        spx_prices, "SPX", expected_secid=SPX_SECURITY_ID, expected_ticker="SPX"
+    )
+    vix = _prepare_prices(vix_prices, "VIX", expected_ticker="VIX")
 
     dates = pd.DatetimeIndex(spx["date"]).union(pd.DatetimeIndex(vix["date"]))
     spx = spx.set_index("date").reindex(dates)

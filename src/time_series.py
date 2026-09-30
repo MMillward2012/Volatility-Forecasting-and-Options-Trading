@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.market_state import spx_trading_dates
+
 
 METRICS = {
     "atm_skew_slope": ("slope_valid", "skew"),
@@ -20,8 +22,8 @@ def load_skew_metrics(path):
     return pd.read_csv(path, parse_dates=["quote_date"])
 
 
-def build_daily_time_series(metrics):
-    """Reshape metric rows and add daily changes and cross-tenor differences."""
+def build_daily_time_series(metrics, spx_prices):
+    """Reshape metrics on SPX sessions before calculating daily changes."""
     required = {"quote_date", "target_days", *METRICS}
     required.update(flag for flag, _ in METRICS.values())
     missing = required - set(metrics.columns)
@@ -38,7 +40,14 @@ def build_daily_time_series(metrics):
     if rows.duplicated(["quote_date", "target_days"]).any():
         raise ValueError("Each (quote_date, target_days) pair must be unique.")
 
-    dates = pd.Index(rows["quote_date"].drop_duplicates().sort_values(), name="quote_date")
+    if rows.empty:
+        raise ValueError("At least one metric row is required.")
+    spx_dates = spx_trading_dates(spx_prices)
+    observed_dates = pd.DatetimeIndex(rows["quote_date"].unique())
+    if not observed_dates.isin(spx_dates).all():
+        raise ValueError("Every metric quote date must be an SPX trading date.")
+    dates = spx_dates[(spx_dates >= observed_dates.min()) & (spx_dates <= observed_dates.max())]
+    dates = dates.rename("quote_date")
     result = pd.DataFrame(index=dates)
     for value_column, (valid_column, prefix) in METRICS.items():
         values = pd.to_numeric(rows[value_column], errors="coerce")
@@ -62,13 +71,8 @@ def build_daily_time_series(metrics):
     return result.reset_index()
 
 
-def add_forward_targets(daily, canonical_quote_dates):
-    """Add fixed 1/5/10-session targets using an explicit trading-date calendar.
-
-    The canonical calendar must contain every session in the period. It may include
-    dates absent from ``daily``; those dates are inserted with missing values so a
-    target can never silently shorten its horizon.
-    """
+def add_forward_targets(daily, spx_prices):
+    """Add fixed 1/5/10-session targets on the SPX trading-date calendar."""
     required = {"quote_date", "skew_30", "skew_30_60", "rr25_30_60"}
     missing = required - set(daily.columns)
     if missing:
@@ -81,15 +85,20 @@ def add_forward_targets(daily, canonical_quote_dates):
     if rows["quote_date"].duplicated().any():
         raise ValueError("daily quote_date values must be unique.")
 
-    dates = pd.DatetimeIndex(pd.to_datetime(canonical_quote_dates, errors="raise"))
-    if dates.isna().any() or dates.empty:
-        raise ValueError("canonical_quote_dates must be nonempty and contain no missing dates.")
-    if dates.has_duplicates or not dates.is_monotonic_increasing:
-        raise ValueError("canonical_quote_dates must be unique and chronologically sorted.")
-    if not rows["quote_date"].isin(dates).all():
-        raise ValueError("Every daily quote date must appear in canonical_quote_dates.")
+    if rows.empty:
+        raise ValueError("At least one daily row is required.")
+    spx_dates = spx_trading_dates(spx_prices)
+    if not rows["quote_date"].isin(spx_dates).all():
+        raise ValueError("Every daily quote date must be an SPX trading date.")
+    dates = spx_dates[(spx_dates >= rows["quote_date"].min()) & (spx_dates <= rows["quote_date"].max())]
 
     aligned = rows.set_index("quote_date").reindex(dates)
+    for prefix in ("skew", "rr25", "atm_iv"):
+        for tenor in TENORS:
+            level = f"{prefix}_{tenor}"
+            change = f"d_{level}"
+            if change in aligned and level in aligned:
+                aligned[change] = pd.to_numeric(aligned[level], errors="coerce").diff()
     target_sources = {
         "y_skew_spread": "skew_30_60",
         "y_skew_30": "skew_30",

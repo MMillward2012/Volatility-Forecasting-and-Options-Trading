@@ -11,12 +11,13 @@ def prices_fixture(periods=25):
     step = np.arange(periods, dtype=float)
     spx = pd.DataFrame({
         "secid": 108105,
+        "ticker": "SPX",
         "date": dates,
         "close": 4000 * np.exp(0.001 * step),
         # Deliberately unrelated values prove returns are calculated from close.
         "return": np.full(periods, 0.25),
     })
-    vix = pd.DataFrame({"date": dates[::-1], "close": 20 + step[::-1]})
+    vix = pd.DataFrame({"ticker": "VIX", "date": dates[::-1], "close": 20 + step[::-1]})
     return spx, vix
 
 
@@ -71,6 +72,18 @@ def test_vix_is_joined_by_date_and_is_never_forward_filled():
     assert state.loc[6, "vix_close"] == pytest.approx(26)
 
 
+@pytest.mark.parametrize("ticker", ["VVIX", "SPX", None])
+def test_wrong_or_missing_vix_ticker_is_rejected(ticker):
+    spx, vix = prices_fixture()
+    if ticker is None:
+        vix = vix.drop(columns="ticker")
+    else:
+        vix["ticker"] = ticker
+
+    with pytest.raises(ValueError, match="ticker=VIX"):
+        build_market_state(spx, vix)
+
+
 def test_market_state_loader_reads_raw_price_csvs(tmp_path):
     spx, vix = prices_fixture()
     spx_path, vix_path = tmp_path / "spx.csv", tmp_path / "vix.csv"
@@ -114,19 +127,19 @@ def test_surface_targets_and_market_state_keep_quote_date_key():
                 "atm_iv": 0.15 + 0.001 * i,
                 "atm_valid": True,
             })
-    daily_surface = build_daily_time_series(pd.DataFrame(rows))
-    targets = add_forward_targets(daily_surface, quote_dates)
-
     all_market_dates = pd.bdate_range(
         quote_dates[0] - pd.Timedelta(days=30), quote_dates[-1]
     )
     step = np.arange(len(all_market_dates), dtype=float)
     spx = pd.DataFrame({
         "secid": 108105,
+        "ticker": "SPX",
         "date": all_market_dates,
         "close": 4000 * np.exp(0.001 * step),
     })
-    vix = pd.DataFrame({"date": all_market_dates, "close": 20 + 0.1 * step})
+    vix = pd.DataFrame({"ticker": "VIX", "date": all_market_dates, "close": 20 + 0.1 * step})
+    daily_surface = build_daily_time_series(pd.DataFrame(rows), spx)
+    targets = add_forward_targets(daily_surface, spx)
     market = build_market_state(spx, vix)
 
     merged = merge_market_state(targets, market)

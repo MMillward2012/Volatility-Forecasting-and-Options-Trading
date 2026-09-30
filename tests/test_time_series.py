@@ -29,8 +29,18 @@ def long_metrics():
     return pd.DataFrame(rows)
 
 
+def spx_prices(dates):
+    return pd.DataFrame({
+        "secid": 108105, "ticker": "SPX", "date": dates, "close": 4000.0,
+    })
+
+
+def metric_spx_prices():
+    return spx_prices(pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"]))
+
+
 def test_long_rows_map_to_sorted_wide_daily_variables():
-    result = build_daily_time_series(long_metrics())
+    result = build_daily_time_series(long_metrics(), metric_spx_prices())
 
     assert result.quote_date.tolist() == list(pd.to_datetime([
         "2025-01-02", "2025-01-03", "2025-01-06",
@@ -46,7 +56,7 @@ def test_qc_flags_mask_only_their_own_metric():
     source.loc[(source.quote_date == "2025-01-02") & (source.target_days == 60), "rr25_valid"] = False
     source.loc[(source.quote_date == "2025-01-02") & (source.target_days == 90), "atm_valid"] = False
 
-    result = build_daily_time_series(source).iloc[0]
+    result = build_daily_time_series(source, metric_spx_prices()).iloc[0]
 
     assert np.isnan(result.skew_30) and result.rr25_30 == 0.31 and result.atm_iv_30 == 0.2
     assert result.skew_60 == 0.2 and np.isnan(result.rr25_60) and result.atm_iv_60 == 0.19
@@ -58,14 +68,14 @@ def test_nonfinite_and_unparseable_metric_values_become_missing():
     source.loc[0, "atm_skew_slope"] = np.inf
     source["rr25_downside"] = source["rr25_downside"].astype(object)
     source.loc[1, "rr25_downside"] = "not a number"
-    result = build_daily_time_series(source)
+    result = build_daily_time_series(source, metric_spx_prices())
     assert np.isnan(result.loc[0, "skew_30"])
     assert np.isnan(result.loc[0, "d_skew_30"])
     assert np.isnan(result.loc[0, "rr25_60"])
 
 
 def test_daily_changes_and_term_structure_differences():
-    result = build_daily_time_series(long_metrics())
+    result = build_daily_time_series(long_metrics(), metric_spx_prices())
 
     assert np.isnan(result.loc[0, "d_skew_30"])
     assert result.loc[1, "d_skew_30"] == pytest.approx(0.05)
@@ -83,7 +93,7 @@ def test_missing_date_observation_prevents_change_across_gap():
     source = source.loc[~(
         (source.quote_date == "2025-01-03") & (source.target_days == 30)
     )]
-    result = build_daily_time_series(source)
+    result = build_daily_time_series(source, metric_spx_prices())
 
     assert result.quote_date.tolist() == list(pd.to_datetime([
         "2025-01-02", "2025-01-03", "2025-01-06",
@@ -96,18 +106,47 @@ def test_missing_date_observation_prevents_change_across_gap():
     assert np.isnan(result.loc[1, "skew_30_60"])
 
 
+def test_entirely_missing_session_does_not_bridge_daily_changes():
+    source = long_metrics().loc[lambda rows: rows.quote_date.ne("2025-01-03")]
+
+    result = build_daily_time_series(source, metric_spx_prices())
+
+    assert result.quote_date.tolist() == list(pd.to_datetime([
+        "2025-01-02", "2025-01-03", "2025-01-06",
+    ]))
+    assert result.loc[1, ["skew_30", "d_skew_30"]].isna().all()
+    assert np.isnan(result.loc[2, "d_skew_30"])
+    assert np.isnan(result.loc[2, "d_rr25_30"])
+    targets = add_forward_targets(result, metric_spx_prices())
+    assert np.isnan(targets.loc[0, "y_skew_30_1d"])
+    assert np.isnan(targets.loc[1, "y_skew_30_1d"])
+
+
+def test_metrics_date_absent_from_spx_calendar_is_rejected():
+    spx = metric_spx_prices().loc[lambda rows: rows.date.ne("2025-01-03")]
+    with pytest.raises(ValueError, match="SPX trading date"):
+        build_daily_time_series(long_metrics(), spx)
+
+
+def test_non_spx_calendar_is_rejected():
+    spx = metric_spx_prices()
+    spx["ticker"] = "VVIX"
+    with pytest.raises(ValueError, match="ticker=SPX"):
+        build_daily_time_series(long_metrics(), spx)
+
+
 def test_duplicate_date_tenor_rows_raise_instead_of_averaging():
     source = long_metrics()
     source = pd.concat([source, source.iloc[[0]]], ignore_index=True)
     with pytest.raises(ValueError, match="must be unique"):
-        build_daily_time_series(source)
+        build_daily_time_series(source, metric_spx_prices())
 
 
 def test_empty_tenor_date_is_retained_with_missing_values():
     source = long_metrics().loc[lambda rows: ~(
         (rows.quote_date == "2025-01-03") & (rows.target_days == 60)
     )]
-    result = build_daily_time_series(source)
+    result = build_daily_time_series(source, metric_spx_prices())
     row = result.loc[result.quote_date.eq(pd.Timestamp("2025-01-03"))].iloc[0]
     assert np.isnan(row.skew_60)
     assert np.isnan(row.rr25_60)
@@ -117,7 +156,7 @@ def test_empty_tenor_date_is_retained_with_missing_values():
 def test_input_dataframe_is_not_modified():
     source = long_metrics()
     original = source.copy(deep=True)
-    build_daily_time_series(source)
+    build_daily_time_series(source, metric_spx_prices())
     pd.testing.assert_frame_equal(source, original)
 
 
@@ -147,7 +186,7 @@ def daily_target_fixture(periods=12):
 def test_forward_targets_use_fixed_one_five_and_ten_session_horizons():
     daily, dates = daily_target_fixture()
 
-    result = add_forward_targets(daily, dates)
+    result = add_forward_targets(daily, spx_prices(dates))
 
     assert result.quote_date.tolist() == dates.tolist()
     for horizon in (1, 5, 10):
@@ -162,7 +201,7 @@ def test_missing_endpoint_makes_only_dependent_targets_missing():
     daily.loc[1, "skew_30_60"] = np.nan
     daily.loc[1, "rr25_30_60"] = np.nan
 
-    result = add_forward_targets(daily, dates)
+    result = add_forward_targets(daily, spx_prices(dates))
 
     assert np.isnan(result.loc[0, "y_skew_spread_1d"])
     assert np.isnan(result.loc[0, "y_skew_30_1d"])
@@ -176,7 +215,7 @@ def test_missing_intermediate_metric_does_not_break_valid_endpoint_target():
     daily, dates = daily_target_fixture()
     daily.loc[2, ["skew_30", "skew_30_60", "rr25_30_60"]] = np.nan
 
-    result = add_forward_targets(daily, dates)
+    result = add_forward_targets(daily, spx_prices(dates))
 
     assert result.loc[0, "y_skew_spread_5d"] == pytest.approx(0.30)
     assert result.loc[0, "y_skew_30_5d"] == pytest.approx(0.50)
@@ -186,7 +225,7 @@ def test_missing_intermediate_metric_does_not_break_valid_endpoint_target():
 def test_final_rows_without_future_endpoints_are_missing():
     daily, dates = daily_target_fixture()
 
-    result = add_forward_targets(daily, dates)
+    result = add_forward_targets(daily, spx_prices(dates))
 
     for horizon in (1, 5, 10):
         columns = [
@@ -199,11 +238,13 @@ def test_final_rows_without_future_endpoints_are_missing():
 def test_absent_trading_date_is_inserted_and_does_not_shorten_horizon():
     daily, dates = daily_target_fixture()
     daily = daily.drop(index=2).reset_index(drop=True)
+    daily["d_skew_30"] = daily["skew_30"].diff()
 
-    result = add_forward_targets(daily, dates)
+    result = add_forward_targets(daily, spx_prices(dates))
 
     assert result.quote_date.tolist() == dates.tolist()
     assert result.loc[2, "quote_date"] == dates[2]
     assert np.isnan(result.loc[2, "skew_30"])
+    assert np.isnan(result.loc[3, "d_skew_30"])
     assert np.isnan(result.loc[1, "y_skew_30_1d"])
     assert result.loc[1, "y_skew_30_5d"] == pytest.approx(0.50)

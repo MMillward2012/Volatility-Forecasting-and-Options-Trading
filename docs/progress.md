@@ -540,11 +540,12 @@ the preceding guarded results. Coverage recovery across failed fits is tested sy
 ### Implemented
 
 - `load_skew_metrics(...)` loads the long-form historical metrics CSV with parsed quote dates.
-- `build_daily_time_series(...)` creates one sorted row per quote date. It masks ATM skew
-  slope, downside 25-delta RR, and ATM IV using their respective validity flags; nonfinite
-  values become missing. It adds adjacent-row daily changes and 30D–60D / 60D–90D
+- `build_daily_time_series(metrics, spx_prices)` aligns metric rows to the SPX
+  security-price trading dates before calculating changes. It masks ATM skew slope,
+  downside 25-delta RR, and ATM IV using their respective validity flags; nonfinite
+  values become missing. It adds one-session changes and 30D–60D / 60D–90D
   differences for each metric. Missing values are not forward-filled.
-- `add_forward_targets(daily, canonical_quote_dates)` adds fixed 1-, 5-, and 10-session
+- `add_forward_targets(daily, spx_prices)` adds fixed 1-, 5-, and 10-session
   endpoint changes:
 
   $$
@@ -557,8 +558,9 @@ the preceding guarded results. Coverage recovery across failed fits is tested sy
   -(RR^{25,30}_t-RR^{25,60}_t).
   $$
 
-  The caller supplies the complete, sorted quote-date sequence. Missing dates are inserted
-  before calculating endpoints, so an absent date cannot shorten a horizon. Only valid
+  SPX trading dates supply the session sequence. Missing metric dates are inserted
+  before calculating changes and endpoints, so an absent date cannot bridge a change
+  or shorten a horizon. Only valid
   start/end values are required; intermediate missing observations do not invalidate an
   endpoint-to-endpoint target. The final $h$ dates have missing targets. No values are filled.
 
@@ -568,11 +570,11 @@ tradability check. The 1- and 10-session versions are robustness horizons.
 
 ### Tests
 
-`tests/test_time_series.py` covers QC masking and long-to-wide construction, adjacent-row
-changes, term structure differences, missing observations, duplicate keys, input
+`tests/test_time_series.py` covers QC masking and long-to-wide construction, one-session
+changes, term structure differences, missing observations and whole missing sessions, duplicate keys, input
 preservation, CSV loading, target arithmetic at all three horizons, missing endpoints,
-missing intermediate values, final-horizon rows, and absent trading dates in the supplied
-canonical sequence.
+missing intermediate values, final-horizon rows, and absent metric dates on the SPX
+session calendar.
 
 ## `src/market_state.py`
 
@@ -580,8 +582,10 @@ canonical sequence.
 
 - `load_market_state(spx_path, vix_path)` reads separate per-security price CSVs.
   Inputs require `date` and `close`; an optional OptionMetrics `return` is retained
-  as `spx_vendor_return` for comparison only. An SPX extract with `secid` is checked
-  against the project's SPX identifier, 108105.
+  as `spx_vendor_return` for comparison only. The SPX extract must have secid 108105
+  and ticker SPX; the VIX extract must have ticker VIX. A VVIX extract is rejected.
+- `spx_trading_dates(spx_prices)` provides the SPX session calendar used by the
+  daily time-series functions.
 - `build_market_state(...)` sorts and aligns prices by the union of SPX and VIX dates.
   It calculates `spx_return` from adjacent SPX closes as
   $r_t=\log(S_t/S_{t-1})$, then adds $|r_t|$ and $r_t^2$. The optional vendor return
@@ -603,7 +607,7 @@ canonical sequence.
 ### Tests
 
 `tests/test_market_state.py` checks close-based log-return arithmetic, RV5/RV20 windows,
-missing-SPX-date handling, exact-date SPX/VIX alignment without VIX filling, CSV loading,
+missing-SPX-date handling, VIX ticker identity, exact-date SPX/VIX alignment without VIX filling, CSV loading,
 and preservation of surface dates when warm-up-only rows are merged.
 
 ## `notebooks/skew_time_series_analysis.ipynb`
