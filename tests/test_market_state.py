@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from src.market_state import build_market_state, load_market_state, merge_market_state
+from src.time_series import add_forward_targets, build_daily_time_series
 
 
 def prices_fixture(periods=25):
@@ -90,8 +91,53 @@ def test_merge_keeps_surface_dates_and_drops_warmup_only_dates():
 
     merged = merge_market_state(surface, market)
 
-    assert merged.date.tolist() == surface_dates.tolist()
+    assert merged.quote_date.tolist() == surface_dates.tolist()
+    assert "date" not in merged.columns
     assert len(merged) == len(surface)
     assert merged.skew_30.tolist() == [1.0, 2.0, 3.0]
     assert merged.rv_20.notna().all()
-    assert not merged.date.isin(spx.date.iloc[:20]).any()
+    assert not merged.quote_date.isin(spx.date.iloc[:20]).any()
+
+
+def test_surface_targets_and_market_state_keep_quote_date_key():
+    quote_dates = pd.bdate_range("2025-01-02", periods=12)
+    rows = []
+    for i, date in enumerate(quote_dates):
+        for tenor, scale in ((30, 1.0), (60, 0.5), (90, 0.25)):
+            rows.append({
+                "quote_date": date,
+                "target_days": tenor,
+                "atm_skew_slope": (0.3 + 0.01 * i) * scale,
+                "slope_valid": True,
+                "rr25_downside": (0.2 + 0.005 * i) * scale,
+                "rr25_valid": True,
+                "atm_iv": 0.15 + 0.001 * i,
+                "atm_valid": True,
+            })
+    daily_surface = build_daily_time_series(pd.DataFrame(rows))
+    targets = add_forward_targets(daily_surface, quote_dates)
+
+    all_market_dates = pd.bdate_range(
+        quote_dates[0] - pd.Timedelta(days=30), quote_dates[-1]
+    )
+    step = np.arange(len(all_market_dates), dtype=float)
+    spx = pd.DataFrame({
+        "secid": 108105,
+        "date": all_market_dates,
+        "close": 4000 * np.exp(0.001 * step),
+    })
+    vix = pd.DataFrame({"date": all_market_dates, "close": 20 + 0.1 * step})
+    market = build_market_state(spx, vix)
+
+    merged = merge_market_state(targets, market)
+
+    assert merged.quote_date.tolist() == quote_dates.tolist()
+    assert "date" not in merged.columns
+    assert "y_skew_spread_5d" in merged.columns
+    assert "spx_return" in merged.columns
+    assert "rv_20" in merged.columns
+    assert "vix_close" in merged.columns
+    assert merged.loc[0, "y_skew_spread_5d"] == pytest.approx(
+        targets.loc[0, "y_skew_spread_5d"]
+    )
+    assert merged.rv_20.notna().all()

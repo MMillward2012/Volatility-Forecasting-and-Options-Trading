@@ -100,7 +100,7 @@ def merge_market_state(daily_surface, market_state):
     if market["date"].isna().any() or market["date"].duplicated().any():
         raise ValueError("market_state dates must be nonmissing and unique.")
 
-    surface = surface.rename(columns={"quote_date": "date"})
+    market = market.rename(columns={"date": "quote_date"})
     return surface.merge(
-        market, on="date", how="left", validate="one_to_one", sort=False,
-    ).sort_values("date", ignore_index=True)
+        market, on="quote_date", how="left", validate="one_to_one", sort=False,
+    ).sort_values("quote_date", ignore_index=True)
