@@ -7,4 +7,5 @@ python -m src.historical_pipeline
 ```
 
 See [historical processing](docs/historical_processing.md) for inputs, outputs, resume,
-failure handling, and validation, and [project progress](docs/progress.md) for the models.
+failure handling, and validation, [project progress](docs/progress.md) for the existing
+models, and the [forecasting protocol](docs/forecasts.md) for the frozen experiment.
