@@ -619,17 +619,26 @@ and preservation of surface dates when warm-up-only rows are merged.
 - Builds the development dataset on every SPX session, with QC-masked states and five-session targets; labels whose endpoint falls in 2025 remain unavailable.
 - Calculates the two headline states' z-scores from 60 prior valid observations and produces expanding, five-session-purged M0 persistence, M1 historical-mean, and M2 mean-reversion forecasts.
 - Adds the frozen M3 own-dynamics, M4 surface-state, M5a realised-market, and M5b VIX predictor blocks. The spread's one-session change is calculated on the full SPX session calendar; market state uses the existing exact-date SPX/VIX join. Each OLS fit uses only complete-case, matured training rows, and a missing current predictor causes that model to abstain. Coefficients are retained by origin.
-- Scores M0–M5b on one strict common set of realised development dates, including $R^2$ versus both persistence and M2 where applicable. M6/M7 and confirmation forecasting are not implemented.
+- M6 elastic net and M7 shallow histogram boosting use the unchanged M5b features. Each development origin selects from the frozen grids using two latest 30-session chronological validation blocks, with expanding fits, five-session label-maturity purging, and at least 100 complete labels before the first block. Elastic-net scaling is fitted separately inside each training fold. Candidate RMSE, selection, and training counts are retained by origin.
+- Scores M0–M7 on one strict common set of realised development dates, including $R^2$ versus persistence and M2 where applicable. Confirmation forecasting is not implemented.
 
 ### Tests
 
-`tests/test_forecasting.py` checks date splitting, past-only z-scores, the 2024/2025 target boundary, missing sessions, matured-label purging, exact M3–M5b feature sets, market-date alignment, missing-predictor abstention, future-value isolation, coefficient recovery, and common-date score arithmetic.
+`tests/test_forecasting.py` checks date splitting, past-only z-scores, the 2024/2025 target boundary, missing sessions, matured-label purging, exact M3–M7 feature sets/settings, market-date alignment, missing-predictor abstention, future-value isolation, coefficient recovery, purged inner folds, training-only elastic-net scaling, deterministic tie-breaking, insufficient-history abstention, and strict common-date score arithmetic.
 
 ## `notebooks/forecast_baselines.ipynb` and `notebooks/forecast_linear_models.ipynb`
 
 ### Implemented
 
 The executed baseline notebook preserves the original M0–M2 development checkpoint. The separate linear-model notebook evaluates M0–M5b on strict common 2024 forecast dates, shows model coverage, cumulative gains versus M0/M2, five non-overlapping offsets, and end-development coefficient/sign-stability diagnostics. It does not evaluate 2025.
+
+## `notebooks/forecast_ml_models.ipynb`
+
+### Implemented
+
+The executed development notebook retains the previous M0–M5b checkpoint and separately compares M0–M7 on 238 strict common 2024 origins per target. It reports coverage, cumulative and quarterly squared-error gains, all five non-overlapping offsets, and M6/M7 hyperparameter-selection frequencies. Per-origin candidate scores and selections are saved under gitignored `data/processed/forecast_ml_selection_dev_2023_2024.csv`. M6/M7 each issued 243 forecasts per target; seven origins lacked current required features. No 2025 forecast was made.
+
+For 30D outright skew change, M2 RMSE/MAE are 0.0987/0.0752. M6 gives 0.0968/0.0742 and $R^2$ versus M2 of 0.0389. Its gain is positive in three of four quarters and four of five non-overlapping offsets. M7 gives RMSE 0.0964 but MAE 0.0754; most of its net gain is concentrated in Q3. Under the frozen rule, M6 is the provisional development choice for this target, with a modest improvement that still needs locked confirmation. For the 30D–60D spread, M2 RMSE/MAE are 0.0524/0.0404; M6 gives 0.0545/0.0419 and M7 gives 0.0543/0.0417, so M2 remains the development choice. These overlapping-target comparisons are descriptive, not iid significance claims or trading results.
 
 ## `notebooks/skew_time_series_analysis.ipynb`
 
@@ -656,7 +665,7 @@ The current test suite covers:
 - Synthetic global SSVI parameter and expiry ATM-variance recovery.
 - Call-put matching and key validation.
 - QC-aware daily time-series construction and fixed 1/5/10-session forward targets.
-- Leakage-safe development M0–M5b forecasts, temporal boundaries, and common-date scoring.
+- Leakage-safe development M0–M7 forecasts, purged inner CV, temporal boundaries, and common-date scoring.
 - SPX/VIX market-state returns, rolling realized volatility, and date alignment.
 
 Run the suite with:

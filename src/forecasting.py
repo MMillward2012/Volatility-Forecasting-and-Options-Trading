@@ -2,6 +2,10 @@
 
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.linear_model import ElasticNet
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 from src.market_state import build_market_state, merge_market_state, spx_trading_dates
 from src.time_series import add_forward_targets, build_daily_time_series
@@ -30,6 +34,16 @@ LINEAR_MODELS = (
 ALL_MODELS = (
     "m0_persistence", "m1_mean", "m2_mean_reversion", *LINEAR_MODELS,
 )
+ML_MODELS = ("m6_elastic_net", "m7_hist_boosting")
+FULL_MODEL_LADDER = (*ALL_MODELS, *ML_MODELS)
+ELASTIC_NET_GRID = tuple(
+    (alpha, l1_ratio)
+    for alpha in (1e-4, 1e-3, 1e-2)
+    for l1_ratio in (0.25, 0.75)
+)
+BOOSTING_GRID = (50, 100)
+INNER_BLOCK_SIZE = 30
+MIN_INNER_TRAIN = 100
 
 
 def split_forecast_dates(rows):
@@ -316,6 +330,180 @@ def score_linear_development_forecasts(forecasts):
             "r2_vs_mean_reversion": (
                 1 - sse / mean_reversion_sse
                 if model in LINEAR_MODELS and mean_reversion_sse > 0 else np.nan
+            ),
+            "correlation": correlation,
+            "directional_accuracy": (
+                float(np.mean(np.sign(prediction) == np.sign(actual)))
+                if model != "m0_persistence" else np.nan
+            ),
+        })
+    return pd.DataFrame(summary), common
+
+
+def inner_validation_blocks(origin):
+    """Two latest 30-session blocks with labels matured by the outer origin."""
+    end = origin - HORIZON + 1
+    middle = end - INNER_BLOCK_SIZE
+    start = middle - INNER_BLOCK_SIZE
+    if start < 0:
+        return None
+    return ((start, middle), (middle, end))
+
+
+def _fit_ml_model(model, candidate, x_train, y_train):
+    if model == "m6_elastic_net":
+        alpha, l1_ratio = candidate
+        estimator = make_pipeline(
+            StandardScaler(),
+            ElasticNet(alpha=alpha, l1_ratio=l1_ratio, fit_intercept=True, max_iter=10000),
+        )
+    elif model == "m7_hist_boosting":
+        estimator = HistGradientBoostingRegressor(
+            loss="squared_error", max_depth=2, min_samples_leaf=30,
+            learning_rate=0.05, max_iter=candidate,
+            early_stopping=False, random_state=0,
+        )
+    else:
+        raise ValueError(f"Unsupported ML model: {model}")
+    return estimator.fit(x_train, y_train)
+
+
+def _select_candidate(model, candidate_rmse):
+    """Resolve exact RMSE ties toward stronger regularisation or fewer trees."""
+    if model == "m6_elastic_net":
+        return min(candidate_rmse, key=lambda c: (
+            candidate_rmse[c], -c[0], -c[1],
+        ))
+    if model == "m7_hist_boosting":
+        return min(candidate_rmse, key=lambda c: (candidate_rmse[c], c))
+    raise ValueError(f"Unsupported ML model: {model}")
+
+
+def forecast_ml_development(dataset, spx_prices, target):
+    """Extend unchanged M0–M5b with purged, nested M6/M7 development forecasts."""
+    forecasts, _ = forecast_linear_development(dataset, spx_prices, target)
+    rows = add_development_zscores(dataset)
+    rows["d_skew_30"] = rows["skew_30"].diff()
+    rows["d_skew_30_60"] = rows["skew_30_60"].diff()
+    columns = linear_feature_sets(target)["m5b_vix_state"]
+    matrix = np.column_stack([
+        pd.to_numeric(rows[column], errors="coerce").to_numpy(dtype=float)
+        for column in columns
+    ])
+    outcomes = pd.to_numeric(rows[target], errors="coerce").to_numpy(dtype=float)
+    complete = np.isfinite(matrix).all(axis=1) & np.isfinite(outcomes)
+    diagnostics = []
+    for origin in range(INITIAL_TRAINING_SESSIONS, len(rows)):
+        outer_end = origin - HORIZON + 1
+        outer_train = np.flatnonzero(complete[:outer_end])
+        blocks = inner_validation_blocks(origin)
+        for model, candidates in (
+            ("m6_elastic_net", ELASTIC_NET_GRID),
+            ("m7_hist_boosting", BOOSTING_GRID),
+        ):
+            record = {
+                "target": target,
+                "quote_date": rows["quote_date"].iloc[origin],
+                "session_index": origin,
+                "model": model,
+                "outer_train_n": len(outer_train),
+            }
+            if not np.isfinite(matrix[origin]).all():
+                diagnostics.append({**record, "status": "missing_origin"})
+                continue
+            if blocks is None or complete[:blocks[0][0] - HORIZON + 1].sum() < MIN_INNER_TRAIN:
+                diagnostics.append({**record, "status": "insufficient_inner_history"})
+                continue
+
+            fold_data = []
+            for start, stop in blocks:
+                train = np.flatnonzero(complete[:start - HORIZON + 1])
+                validation = np.flatnonzero(complete[start:stop]) + start
+                if not len(train) or not len(validation):
+                    break
+                fold_data.append((train, validation))
+            if len(fold_data) != 2:
+                diagnostics.append({**record, "status": "incomplete_inner_blocks"})
+                continue
+
+            candidate_rmse = {}
+            for candidate in candidates:
+                squared_error = 0.0
+                validation_count = 0
+                for train, validation in fold_data:
+                    fitted = _fit_ml_model(model, candidate, matrix[train], outcomes[train])
+                    errors = outcomes[validation] - fitted.predict(matrix[validation])
+                    squared_error += float(np.square(errors).sum())
+                    validation_count += len(validation)
+                candidate_rmse[candidate] = float(np.sqrt(squared_error / validation_count))
+            selected = _select_candidate(model, candidate_rmse)
+            fitted = _fit_ml_model(model, selected, matrix[outer_train], outcomes[outer_train])
+            forecasts.loc[origin - INITIAL_TRAINING_SESSIONS, model] = float(
+                fitted.predict(matrix[origin:origin + 1])[0]
+            )
+            for candidate, rmse in candidate_rmse.items():
+                diagnostics.append({
+                    **record,
+                    "status": "selected" if candidate == selected else "candidate",
+                    "alpha": candidate[0] if model == "m6_elastic_net" else np.nan,
+                    "l1_ratio": candidate[1] if model == "m6_elastic_net" else np.nan,
+                    "max_iter": candidate if model == "m7_hist_boosting" else np.nan,
+                    "inner_rmse": rmse,
+                    "inner_n": validation_count,
+                    "fold1_n": len(fold_data[0][1]),
+                    "fold2_n": len(fold_data[1][1]),
+                    "selected": candidate == selected,
+                    "nonzero_coefficients": (
+                        int(np.count_nonzero(fitted[-1].coef_))
+                        if model == "m6_elastic_net" and candidate == selected else np.nan
+                    ),
+                })
+    for model in ML_MODELS:
+        if model not in forecasts:
+            forecasts[model] = np.nan
+    return forecasts, pd.DataFrame(diagnostics)
+
+
+def score_ml_development_forecasts(forecasts):
+    """Score the frozen M0–M7 ladder on one strict set of development dates."""
+    required = {"quote_date", "actual", *FULL_MODEL_LADDER}
+    missing = required - set(forecasts.columns)
+    if missing:
+        raise ValueError(f"Missing forecast columns: {sorted(missing)}")
+    dates = pd.to_datetime(forecasts["quote_date"], errors="raise")
+    if dates.isna().any() or dates.duplicated().any() or not dates.between(DEV_START, DEV_END).all():
+        raise ValueError("Scoring requires unique development forecast dates.")
+
+    common = forecasts.copy()
+    for column in ("actual", *FULL_MODEL_LADDER):
+        values = pd.to_numeric(common[column], errors="coerce")
+        common[column] = values.where(np.isfinite(values))
+    common = common.dropna(subset=["actual", *FULL_MODEL_LADDER]).sort_values("quote_date")
+    if common.empty:
+        raise ValueError("No common realised dates for M0–M7.")
+
+    actual = common["actual"].to_numpy()
+    persistence_sse = np.square(actual - common["m0_persistence"].to_numpy()).sum()
+    mean_reversion_sse = np.square(actual - common["m2_mean_reversion"].to_numpy()).sum()
+    summary = []
+    for model in FULL_MODEL_LADDER:
+        prediction = common[model].to_numpy()
+        errors = actual - prediction
+        sse = np.square(errors).sum()
+        correlation = np.nan
+        if np.std(prediction) > 0 and np.std(actual) > 0:
+            correlation = float(np.corrcoef(prediction, actual)[0, 1])
+        summary.append({
+            "model": model,
+            "n_common": len(common),
+            "first_date": common["quote_date"].iloc[0],
+            "last_date": common["quote_date"].iloc[-1],
+            "rmse": float(np.sqrt(np.mean(np.square(errors)))),
+            "mae": float(np.mean(np.abs(errors))),
+            "r2_vs_persistence": 1 - sse / persistence_sse if persistence_sse > 0 else np.nan,
+            "r2_vs_mean_reversion": (
+                1 - sse / mean_reversion_sse
+                if model not in FULL_MODEL_LADDER[:3] and mean_reversion_sse > 0 else np.nan
             ),
             "correlation": correlation,
             "directional_accuracy": (

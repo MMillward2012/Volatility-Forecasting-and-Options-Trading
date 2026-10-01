@@ -1,16 +1,26 @@
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.pipeline import Pipeline
 
+import src.forecasting as forecasting
 from src.forecasting import (
+    BOOSTING_GRID,
+    ELASTIC_NET_GRID,
+    FULL_MODEL_LADDER,
+    INNER_BLOCK_SIZE,
+    MIN_INNER_TRAIN,
     add_development_zscores,
     build_development_dataset,
     build_linear_development_dataset,
     forecast_development,
     forecast_linear_development,
+    forecast_ml_development,
+    inner_validation_blocks,
     linear_feature_sets,
     score_development_forecasts,
     score_linear_development_forecasts,
+    score_ml_development_forecasts,
     split_forecast_dates,
 )
 
@@ -422,3 +432,143 @@ def test_linear_scoring_uses_strict_common_dates_and_two_benchmark_r2s():
     assert m4.r2_vs_mean_reversion == pytest.approx(0.5)
     assert pd.isna(summary.set_index("model").loc["m2_mean_reversion", "r2_vs_mean_reversion"])
     assert pd.isna(summary.set_index("model").loc["m0_persistence", "directional_accuracy"])
+
+
+def test_frozen_ml_grids_and_feature_universe():
+    assert ELASTIC_NET_GRID == (
+        (1e-4, 0.25), (1e-4, 0.75),
+        (1e-3, 0.25), (1e-3, 0.75),
+        (1e-2, 0.25), (1e-2, 0.75),
+    )
+    assert BOOSTING_GRID == (50, 100)
+    assert FULL_MODEL_LADDER[-2:] == ("m6_elastic_net", "m7_hist_boosting")
+    for target in ("y_skew_30_5d", "y_skew_spread_5d"):
+        assert len(linear_feature_sets(target)["m5b_vix_state"]) == 14
+
+
+def test_inner_blocks_are_latest_two_30_session_blocks_with_purged_training():
+    assert INNER_BLOCK_SIZE == 30
+    assert MIN_INNER_TRAIN == 100
+    blocks = inner_validation_blocks(252)
+    assert blocks == ((188, 218), (218, 248))
+    assert blocks[1][1] - 1 == 252 - 5
+    assert blocks[0][0] - 5 == 183
+    assert blocks[1][0] - 5 == 213
+
+
+def test_deterministic_ties_favour_stronger_regularisation_and_fewer_trees():
+    elastic_ties = {candidate: 0.1 for candidate in ELASTIC_NET_GRID}
+    assert forecasting._select_candidate("m6_elastic_net", elastic_ties) == (1e-2, 0.75)
+    tree_ties = {candidate: 0.1 for candidate in BOOSTING_GRID}
+    assert forecasting._select_candidate("m7_hist_boosting", tree_ties) == 50
+
+
+def test_elastic_net_scaler_sees_training_rows_only():
+    x_train = np.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
+    model = forecasting._fit_ml_model(
+        "m6_elastic_net", (1e-3, 0.25), x_train, np.array([0.0, 1.0, 2.0])
+    )
+    assert isinstance(model, Pipeline)
+    np.testing.assert_allclose(model[0].mean_, [2.0, 3.0])
+    assert model[-1].fit_intercept
+
+
+def test_hist_boosting_uses_exact_frozen_settings_without_scaling():
+    x_train = np.arange(140, dtype=float).reshape(70, 2)
+    y_train = np.sin(np.arange(70, dtype=float))
+    model = forecasting._fit_ml_model("m7_hist_boosting", 50, x_train, y_train)
+    for name, expected in {
+        "loss": "squared_error",
+        "max_depth": 2,
+        "min_samples_leaf": 30,
+        "learning_rate": 0.05,
+        "max_iter": 50,
+        "early_stopping": False,
+        "random_state": 0,
+    }.items():
+        assert model.get_params()[name] == expected
+    assert not isinstance(model, Pipeline)
+
+
+def test_ml_models_record_frozen_candidates_and_purged_fold_training(monkeypatch):
+    rows, prices = linear_rows(periods=253)
+    rows["vix_close"] = np.arange(len(rows), dtype=float)
+    fitted_indices = []
+    original_fit = forecasting._fit_ml_model
+
+    def record_fit(model, candidate, x_train, y_train):
+        fitted_indices.append((model, candidate, int(x_train[:, -1].max())))
+        return original_fit(model, candidate, x_train, y_train)
+
+    monkeypatch.setattr(forecasting, "_fit_ml_model", record_fit)
+    predictions, diagnostics = forecast_ml_development(rows, prices, "y_skew_30_5d")
+    assert np.isfinite(predictions.loc[0, "m6_elastic_net"])
+    assert np.isfinite(predictions.loc[0, "m7_hist_boosting"])
+    assert len(diagnostics) == 8
+    assert diagnostics.groupby("model")["selected"].sum().to_dict() == {
+        "m6_elastic_net": 1, "m7_hist_boosting": 1,
+    }
+    assert diagnostics.fold1_n.eq(30).all()
+    assert diagnostics.fold2_n.eq(30).all()
+    assert diagnostics.outer_train_n.eq(188).all()
+    for model, candidates in (("m6_elastic_net", ELASTIC_NET_GRID),
+                              ("m7_hist_boosting", BOOSTING_GRID)):
+        calls = [(candidate, last) for label, candidate, last in fitted_indices if label == model]
+        assert len(calls) == 2 * len(candidates) + 1
+        for candidate, first, second in zip(candidates, calls[::2], calls[1::2]):
+            assert first == (candidate, 183)
+            assert second == (candidate, 213)
+        assert calls[-1][1] == 247
+
+
+def test_ml_models_abstain_when_first_inner_block_lacks_100_training_labels():
+    rows, prices = linear_rows(periods=253)
+    rows.loc[:100, "vix_close"] = np.nan
+    predictions, diagnostics = forecast_ml_development(rows, prices, "y_skew_30_5d")
+    assert predictions.loc[0, ["m6_elastic_net", "m7_hist_boosting"]].isna().all()
+    assert diagnostics.status.eq("insufficient_inner_history").all()
+
+
+def test_unmatured_targets_and_future_features_do_not_change_ml_origin():
+    rows, prices = linear_rows(periods=254)
+    original, original_diagnostics = forecast_ml_development(rows, prices, "y_skew_spread_5d")
+    changed = rows.copy()
+    changed.loc[248, "y_skew_spread_5d"] = 999
+    changed.loc[253, ["skew_30_60", "atm_iv_30", "vix_close"]] = 999
+    later, later_diagnostics = forecast_ml_development(changed, prices, "y_skew_spread_5d")
+    for model in ("m6_elastic_net", "m7_hist_boosting"):
+        assert later.loc[0, model] == pytest.approx(original.loc[0, model])
+    pd.testing.assert_frame_equal(
+        later_diagnostics.loc[later_diagnostics.session_index.eq(252)].reset_index(drop=True),
+        original_diagnostics.loc[original_diagnostics.session_index.eq(252)].reset_index(drop=True),
+    )
+
+
+def test_ml_forecast_rejects_2025_rows():
+    rows, prices = linear_rows(periods=253)
+    rows.loc[252, "quote_date"] = pd.Timestamp("2025-01-02")
+    with pytest.raises(ValueError, match="confirmation dates"):
+        forecast_ml_development(rows, prices, "y_skew_30_5d")
+
+
+def test_ml_scoring_uses_strict_common_dates_and_both_r2_benchmarks():
+    dates = pd.bdate_range("2024-01-02", periods=3)
+    forecasts = pd.DataFrame({
+        "quote_date": dates,
+        "actual": [2.0, -1.0, 10.0],
+        "m0_persistence": [0.0, 0.0, 0.0],
+        "m1_mean": [0.0, 0.0, 0.0],
+        "m2_mean_reversion": [1.0, 0.0, 0.0],
+        "m3_own_dynamics": [2.0, -1.0, 0.0],
+        "m4_surface_state": [1.0, -1.0, 0.0],
+        "m5a_realized_state": [1.0, 0.0, 0.0],
+        "m5b_vix_state": [2.0, -1.0, 0.0],
+        "m6_elastic_net": [1.0, -1.0, 0.0],
+        "m7_hist_boosting": [2.0, -1.0, np.nan],
+    })
+    summary, common = score_ml_development_forecasts(forecasts)
+    assert common.quote_date.tolist() == dates[:2].tolist()
+    assert summary.n_common.eq(2).all()
+    m6 = summary.set_index("model").loc["m6_elastic_net"]
+    assert m6.r2_vs_persistence == pytest.approx(0.8)
+    assert m6.r2_vs_mean_reversion == pytest.approx(0.5)
