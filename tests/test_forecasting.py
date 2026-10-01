@@ -6,6 +6,7 @@ from src.forecasting import (
     add_development_zscores,
     build_development_dataset,
     forecast_development,
+    score_development_forecasts,
     split_forecast_dates,
 )
 
@@ -184,3 +185,38 @@ def test_end_of_development_targets_are_unavailable():
     predictions = forecast_development(dataset, prices, "y_skew_30_5d")
     assert predictions.tail(5)["actual"].isna().all()
     assert predictions.tail(5)["m0_persistence"].eq(0).all()
+
+
+def test_scoring_uses_identical_realised_dates_for_all_models():
+    forecasts = pd.DataFrame({
+        "quote_date": pd.bdate_range("2024-01-02", periods=4),
+        "actual": [1.0, 2.0, -1.0, np.nan],
+        "m0_persistence": [0.0, 0.0, 0.0, 0.0],
+        "m1_mean": [0.5, 1.0, 0.0, 0.0],
+        "m2_mean_reversion": [1.0, np.nan, -1.0, 0.0],
+    })
+    summary, common = score_development_forecasts(forecasts)
+    assert common.quote_date.tolist() == [forecasts.loc[0, "quote_date"], forecasts.loc[2, "quote_date"]]
+    assert summary.n_common.tolist() == [2, 2, 2]
+    assert summary.loc[0, "rmse"] == pytest.approx(1.0)
+    assert summary.loc[2, "rmse"] == pytest.approx(0.0)
+    assert summary.loc[2, "r2_vs_persistence"] == pytest.approx(1.0)
+    assert pd.isna(summary.loc[0, "correlation"])
+    assert pd.isna(summary.loc[0, "directional_accuracy"])
+
+
+def test_scoring_rejects_holdout_dates_and_no_common_dates():
+    forecasts = pd.DataFrame({
+        "quote_date": [pd.Timestamp("2025-01-02")],
+        "actual": [1.0],
+        "m0_persistence": [0.0],
+        "m1_mean": [0.0],
+        "m2_mean_reversion": [0.0],
+    })
+    with pytest.raises(ValueError, match="development forecast dates"):
+        score_development_forecasts(forecasts)
+
+    forecasts.loc[0, "quote_date"] = pd.Timestamp("2024-12-31")
+    forecasts.loc[0, "m2_mean_reversion"] = np.nan
+    with pytest.raises(ValueError, match="No common realised dates"):
+        score_development_forecasts(forecasts)

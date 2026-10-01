@@ -100,6 +100,7 @@ def forecast_development(dataset, spx_prices, target):
         valid_pair = valid_y & np.isfinite(train_z)
         record = {
             "quote_date": dates.iloc[origin],
+            "session_index": origin,
             "target": target,
             "m0_persistence": np.nan,
             "m1_mean": np.nan,
@@ -120,6 +121,52 @@ def forecast_development(dataset, spx_prices, target):
     result = pd.DataFrame(forecasts)
     result["actual"] = outcomes[INITIAL_TRAINING_SESSIONS:]
     return result.reindex(columns=[
-        "quote_date", "target", "actual", "m0_persistence", "m1_mean",
+        "quote_date", "session_index", "target", "actual", "m0_persistence", "m1_mean",
         "m2_mean_reversion", "n_matured",
     ])
+
+
+def score_development_forecasts(forecasts):
+    """Score M0/M1/M2 on identical, realised development forecast origins."""
+    models = ("m0_persistence", "m1_mean", "m2_mean_reversion")
+    required = {"quote_date", "actual", *models}
+    missing = required - set(forecasts.columns)
+    if missing:
+        raise ValueError(f"Missing forecast columns: {sorted(missing)}")
+    dates = pd.to_datetime(forecasts["quote_date"], errors="raise")
+    if dates.isna().any() or dates.duplicated().any() or not dates.between(DEV_START, DEV_END).all():
+        raise ValueError("Scoring requires unique development forecast dates.")
+
+    common = forecasts.copy()
+    for column in ("actual", *models):
+        values = pd.to_numeric(common[column], errors="coerce")
+        common[column] = values.where(np.isfinite(values))
+    common = common.dropna(subset=["actual", *models]).sort_values("quote_date")
+    if common.empty:
+        raise ValueError("No common realised dates for M0/M1/M2.")
+
+    actual = common["actual"].to_numpy()
+    persistence_sse = np.square(actual - common["m0_persistence"].to_numpy()).sum()
+    summary = []
+    for model in models:
+        prediction = common[model].to_numpy()
+        errors = actual - prediction
+        sse = np.square(errors).sum()
+        correlation = np.nan
+        if np.std(prediction) > 0 and np.std(actual) > 0:
+            correlation = float(np.corrcoef(prediction, actual)[0, 1])
+        summary.append({
+            "model": model,
+            "n_common": len(common),
+            "first_date": common["quote_date"].iloc[0],
+            "last_date": common["quote_date"].iloc[-1],
+            "rmse": float(np.sqrt(np.mean(np.square(errors)))),
+            "mae": float(np.mean(np.abs(errors))),
+            "r2_vs_persistence": 1 - sse / persistence_sse if persistence_sse > 0 else np.nan,
+            "correlation": correlation,
+            "directional_accuracy": (
+                float(np.mean(np.sign(prediction) == np.sign(actual)))
+                if model != "m0_persistence" else np.nan
+            ),
+        })
+    return pd.DataFrame(summary), common
