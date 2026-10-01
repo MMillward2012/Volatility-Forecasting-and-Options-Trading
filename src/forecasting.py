@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from src.market_state import spx_trading_dates
+from src.market_state import build_market_state, merge_market_state, spx_trading_dates
 from src.time_series import add_forward_targets, build_daily_time_series
 
 
@@ -17,6 +17,19 @@ TARGET_STATES = {
     "y_skew_30_5d": ("skew_30", "z_skew_30"),
     "y_skew_spread_5d": ("skew_30_60", "z_skew_30_60"),
 }
+SURFACE_FEATURES = (
+    "skew_60", "skew_30_60", "skew_60_90",
+    "atm_iv_30", "atm_iv_30_60", "atm_iv_60_90",
+)
+REALIZED_FEATURES = (
+    "spx_return", "spx_abs_return", "spx_return_sq", "rv_5", "rv_20",
+)
+LINEAR_MODELS = (
+    "m3_own_dynamics", "m4_surface_state", "m5a_realized_state", "m5b_vix_state",
+)
+ALL_MODELS = (
+    "m0_persistence", "m1_mean", "m2_mean_reversion", *LINEAR_MODELS,
+)
 
 
 def split_forecast_dates(rows):
@@ -163,6 +176,147 @@ def score_development_forecasts(forecasts):
             "rmse": float(np.sqrt(np.mean(np.square(errors)))),
             "mae": float(np.mean(np.abs(errors))),
             "r2_vs_persistence": 1 - sse / persistence_sse if persistence_sse > 0 else np.nan,
+            "correlation": correlation,
+            "directional_accuracy": (
+                float(np.mean(np.sign(prediction) == np.sign(actual)))
+                if model != "m0_persistence" else np.nan
+            ),
+        })
+    return pd.DataFrame(summary), common
+
+
+def build_linear_development_dataset(metrics, spx_prices, vix_prices):
+    """Add declared market features to the development panel by exact date."""
+    metric_dates = pd.to_datetime(metrics["quote_date"], errors="raise")
+    spx_dates = pd.to_datetime(spx_prices["date"], errors="raise")
+    vix_dates = pd.to_datetime(vix_prices["date"], errors="raise")
+    if metric_dates.isna().any() or spx_dates.isna().any() or vix_dates.isna().any():
+        raise ValueError("Input dates cannot be missing.")
+    development = build_development_dataset(
+        metrics.loc[metric_dates <= DEV_END], spx_prices.loc[spx_dates <= DEV_END]
+    )
+    market = build_market_state(
+        spx_prices.loc[spx_dates <= DEV_END], vix_prices.loc[vix_dates <= DEV_END]
+    )
+    market = market[["date", *REALIZED_FEATURES, "vix_close"]]
+    result = merge_market_state(development, market)
+    result["d_skew_30_60"] = result["skew_30_60"].diff()
+    return result
+
+
+def linear_feature_sets(target):
+    """Return the exact frozen M3–M5b predictor blocks for a headline target."""
+    if target not in TARGET_STATES:
+        raise ValueError(f"Unsupported headline target: {target}")
+    zscore = TARGET_STATES[target][1]
+    change = "d_skew_30" if target == "y_skew_30_5d" else "d_skew_30_60"
+    own = (zscore, change)
+    surface = own + SURFACE_FEATURES
+    realized = surface + REALIZED_FEATURES
+    return dict(zip(LINEAR_MODELS, (
+        own, surface, realized, realized + ("vix_close",),
+    )))
+
+
+def forecast_linear_development(dataset, spx_prices, target):
+    """Extend unchanged M0–M2 forecasts with expanding, purged M3–M5b OLS fits."""
+    baseline = forecast_development(dataset, spx_prices, target)
+    rows = add_development_zscores(dataset)
+    rows["d_skew_30"] = rows["skew_30"].diff()
+    rows["d_skew_30_60"] = rows["skew_30_60"].diff()
+    feature_sets = linear_feature_sets(target)
+    required = {column for features in feature_sets.values() for column in features}
+    missing = required - set(rows.columns)
+    if missing:
+        raise ValueError(f"Missing linear forecast columns: {sorted(missing)}")
+
+    outcomes = pd.to_numeric(rows[target], errors="coerce").to_numpy(dtype=float)
+    features = {
+        column: pd.to_numeric(rows[column], errors="coerce").to_numpy(dtype=float)
+        for column in required
+    }
+    matrices = {
+        model: np.column_stack([features[column] for column in columns])
+        for model, columns in feature_sets.items()
+    }
+    coefficients = []
+    for origin in range(INITIAL_TRAINING_SESSIONS, len(rows)):
+        training_end = origin - HORIZON + 1
+        for model, columns in feature_sets.items():
+            matrix = matrices[model]
+            valid = np.isfinite(outcomes[:training_end]) & np.isfinite(matrix[:training_end]).all(axis=1)
+            train_x = matrix[:training_end][valid]
+            train_y = outcomes[:training_end][valid]
+            if len(train_y) < len(columns) + 1:
+                continue
+            design = np.column_stack((np.ones(len(train_y)), train_x))
+            beta, _, rank, _ = np.linalg.lstsq(design, train_y, rcond=None)
+            if rank < len(columns) + 1:
+                continue
+            for feature, value in zip(("intercept", *columns), beta):
+                coefficients.append({
+                    "quote_date": rows["quote_date"].iloc[origin],
+                    "session_index": origin,
+                    "target": target,
+                    "model": model,
+                    "n_train": len(train_y),
+                    "feature": feature,
+                    "coefficient": float(value),
+                })
+            if np.isfinite(matrix[origin]).all():
+                baseline.loc[origin - INITIAL_TRAINING_SESSIONS, model] = float(
+                    np.r_[1.0, matrix[origin]] @ beta
+                )
+    for model in LINEAR_MODELS:
+        if model not in baseline:
+            baseline[model] = np.nan
+    return baseline, pd.DataFrame(coefficients, columns=[
+        "quote_date", "session_index", "target", "model", "n_train",
+        "feature", "coefficient",
+    ])
+
+
+def score_linear_development_forecasts(forecasts):
+    """Score all seven frozen models on one strict common set of development dates."""
+    required = {"quote_date", "actual", *ALL_MODELS}
+    missing = required - set(forecasts.columns)
+    if missing:
+        raise ValueError(f"Missing forecast columns: {sorted(missing)}")
+    dates = pd.to_datetime(forecasts["quote_date"], errors="raise")
+    if dates.isna().any() or dates.duplicated().any() or not dates.between(DEV_START, DEV_END).all():
+        raise ValueError("Scoring requires unique development forecast dates.")
+
+    common = forecasts.copy()
+    for column in ("actual", *ALL_MODELS):
+        values = pd.to_numeric(common[column], errors="coerce")
+        common[column] = values.where(np.isfinite(values))
+    common = common.dropna(subset=["actual", *ALL_MODELS]).sort_values("quote_date")
+    if common.empty:
+        raise ValueError("No common realised dates for M0–M5b.")
+
+    actual = common["actual"].to_numpy()
+    persistence_sse = np.square(actual - common["m0_persistence"].to_numpy()).sum()
+    mean_reversion_sse = np.square(actual - common["m2_mean_reversion"].to_numpy()).sum()
+    summary = []
+    for model in ALL_MODELS:
+        prediction = common[model].to_numpy()
+        errors = actual - prediction
+        sse = np.square(errors).sum()
+        correlation = np.nan
+        if np.std(prediction) > 0 and np.std(actual) > 0:
+            correlation = float(np.corrcoef(prediction, actual)[0, 1])
+        summary.append({
+            "model": model,
+            "n_common": len(common),
+            "first_date": common["quote_date"].iloc[0],
+            "last_date": common["quote_date"].iloc[-1],
+            "rmse": float(np.sqrt(np.mean(np.square(errors)))),
+            "mae": float(np.mean(np.abs(errors))),
+            "r2_vs_persistence": 1 - sse / persistence_sse if persistence_sse > 0 else np.nan,
+            "r2_vs_mean_reversion": (
+                1 - sse / mean_reversion_sse
+                if model in LINEAR_MODELS and mean_reversion_sse > 0 else np.nan
+            ),
             "correlation": correlation,
             "directional_accuracy": (
                 float(np.mean(np.sign(prediction) == np.sign(actual)))

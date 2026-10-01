@@ -617,11 +617,19 @@ and preservation of surface dates when warm-up-only rows are merged.
 
 - Splits development (2023–2024) and confirmation (2025) dates without altering source rows.
 - Builds the development dataset on every SPX session, with QC-masked states and five-session targets; labels whose endpoint falls in 2025 remain unavailable.
-- Calculates the two headline states' z-scores from 60 prior valid observations and produces expanding, five-session-purged M0 persistence, M1 historical-mean, and M2 mean-reversion forecasts. Confirmation forecasting and richer models are not implemented yet.
+- Calculates the two headline states' z-scores from 60 prior valid observations and produces expanding, five-session-purged M0 persistence, M1 historical-mean, and M2 mean-reversion forecasts.
+- Adds the frozen M3 own-dynamics, M4 surface-state, M5a realised-market, and M5b VIX predictor blocks. The spread's one-session change is calculated on the full SPX session calendar; market state uses the existing exact-date SPX/VIX join. Each OLS fit uses only complete-case, matured training rows, and a missing current predictor causes that model to abstain. Coefficients are retained by origin.
+- Scores M0–M5b on one strict common set of realised development dates, including $R^2$ versus both persistence and M2 where applicable. M6/M7 and confirmation forecasting are not implemented.
 
 ### Tests
 
-`tests/test_forecasting.py` checks date splitting, past-only z-scores, the 2024/2025 target boundary, missing sessions, matured-label purging, and exclusion of confirmation dates from development forecasts.
+`tests/test_forecasting.py` checks date splitting, past-only z-scores, the 2024/2025 target boundary, missing sessions, matured-label purging, exact M3–M5b feature sets, market-date alignment, missing-predictor abstention, future-value isolation, coefficient recovery, and common-date score arithmetic.
+
+## `notebooks/forecast_baselines.ipynb` and `notebooks/forecast_linear_models.ipynb`
+
+### Implemented
+
+The executed baseline notebook preserves the original M0–M2 development checkpoint. The separate linear-model notebook evaluates M0–M5b on strict common 2024 forecast dates, shows model coverage, cumulative gains versus M0/M2, five non-overlapping offsets, and end-development coefficient/sign-stability diagnostics. It does not evaluate 2025.
 
 ## `notebooks/skew_time_series_analysis.ipynb`
 
@@ -648,7 +656,7 @@ The current test suite covers:
 - Synthetic global SSVI parameter and expiry ATM-variance recovery.
 - Call-put matching and key validation.
 - QC-aware daily time-series construction and fixed 1/5/10-session forward targets.
-- Leakage-safe development M0–M2 forecasts and temporal boundaries.
+- Leakage-safe development M0–M5b forecasts, temporal boundaries, and common-date scoring.
 - SPX/VIX market-state returns, rolling realized volatility, and date alignment.
 
 Run the suite with:
