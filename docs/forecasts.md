@@ -27,7 +27,7 @@ $$
 z_t=\frac{X_t-\bar X_{<t}}{s_{<t}},
 $$
 
-where the mean and sample standard deviation use only earlier valid SPX-session observations. Shift before expanding; do not emit $z_t$ until 60 prior valid observations exist, or if the historical standard deviation is zero. The current $X_t$ enters only the numerator. No z-score window search is permitted. Other scaling or preprocessing must be fitted within the applicable training window or inner-CV fold only. In the strict locked confirmation, freeze fitted preprocessing, including the z-score reference moments, at the end of 2024; apply those frozen moments to 2025 states.
+where the mean and sample standard deviation use only earlier valid SPX-session observations. Shift before expanding; do not emit $z_t$ until 60 prior valid observations exist, or if the historical standard deviation is zero. The current $X_t$ enters only the numerator. No z-score window search is permitted. Continue this same expanding calculation in 2025: earlier 2025 surface states are observable at $t$ and may update the reference moments, but the current and future states, target outcomes, and forecast errors may not. Other scaling or preprocessing must be fitted within the applicable training window or inner-CV fold only; fitted scalers are frozen for the strict locked confirmation.
 
 Same-date market-state variables are joined by exact date using `merge_market_state`; no VIX filling. The available variables are `spx_return`, `spx_abs_return`, `spx_return_sq`, `rv_5`, `rv_20` and `vix_close`. They are known only after the relevant close, so later execution assumptions must not place a trade at that same close.
 
@@ -71,13 +71,13 @@ Five-session targets overlap. For later uncertainty/statistical comparisons use 
 
 ## Locked confirmation and pre-specified checks
 
-Use 2023–2024 pseudo-OOS results to choose one final specification per headline target. For `locked_holdout`, fit it using only development labels matured by 2024-12-31, then freeze coefficients, hyperparameters, feature definitions and fitted transformations. Predict 2025 without adapting to its forecast errors or labels. Report separately, if later desired, `recursive_deployment`: the same frozen model family and hyperparameters may re-estimate coefficients using newly matured 2025 labels as they become available. Never conflate the two or use 2025 outcomes for model/feature selection.
+Use 2023–2024 pseudo-OOS results to choose one final specification per headline target. For `locked_holdout`, fit it using only development labels matured by 2024-12-31, then freeze coefficients, hyperparameters, feature definitions and any separately fitted transformations. The pre-specified expanding z-score remains causal and continues to update from earlier observed surface states in 2025; this does not re-estimate the forecasting model. Predict 2025 without adapting to its forecast errors or labels. Report separately, if later desired, `recursive_deployment`: the same frozen model family and hyperparameters may re-estimate coefficients using newly matured 2025 labels as they become available. Never conflate the two or use 2025 outcomes for model/feature selection.
 
 After headline evaluation, run the pre-specified robustness matrix: 1D/5D/10D; 30D/60D/90D outright; 30D–60D/60D–90D spreads; skew slope/RR25; overlapping/all five non-overlapping 5D offsets; endpoint-valid/complete-path-valid targets; VIX below/at-or-above a **fixed level of 20**; and excluding the most extreme 1% of absolute target moves. Fix the extreme-move cutoff from development outcomes only and use it for the 2025 diagnostic; outcome-based trimming is *evaluation only*, never a live predictor or training-time rule. Robustness cells cannot replace the headline result.
 
 Check whether prediction errors or apparent gains cluster around bracket gaps, rejected Raw SVI slices, limited maturity support or large calendar repairs. Use existing surface diagnostics as quality controls first, not a new predictor block. Keep metric-specific QC masking and exact-date joins. Options-trading simulation is outside this stage; only after OOS forecasting beats persistence and simple mean reversion should a vega-aware, delta-hedged cross-tenor trade with executable bid/ask assumptions be designed.
 
-When forecasting code is implemented, unit tests must cover: date split and 2025 exclusion from development fitting; SPX-session horizon alignment and missing final-five labels; $i+h\leq t$ purging, including the 2024/2025 boundary; past-only z-scores and rolling features; training-only scalers; chronological purged CV and no random splits; metric/date missingness; common-date scoring; and frozen 2025 model, hyperparameters and preprocessing.
+When forecasting code is implemented, unit tests must cover: date split and 2025 exclusion from development fitting; SPX-session horizon alignment and missing final-five labels; $i+h\leq t$ purging, including the 2024/2025 boundary; past-only z-scores continuing across that boundary using only earlier surface states; training-only scalers; chronological purged CV and no random splits; metric/date missingness; common-date scoring; and frozen 2025 model, hyperparameters and separately fitted preprocessing.
 
 ## Frozen decisions
 
@@ -85,13 +85,17 @@ When forecasting code is implemented, unit tests must cover: date split and 2025
 | --- | --- |
 | Development / confirmation | 2023-01-03–2024-12-31 / 2025-01-01–2025-08-29; date-filtered, source CSV unchanged |
 | Headline targets | `y_skew_30_5d` and `y_skew_spread_5d`; 5 SPX sessions |
-| Z-score | Expanding, 60 prior QC-valid observations; no window search |
+| Z-score | Expanding, 60 prior QC-valid observations through development and confirmation; no window search |
 | Origin and label eligibility | First forecast after 252 prior SPX sessions; train only on $i+5\leq t$ |
 | Model comparison | M0–M7 above, with M5a/M5b ablation; smallest qualifying model wins |
 | CV / tuning | Two expanding purged 30-session blocks; stated M6/M7 grids; inner RMSE |
 | Evaluation | Common OOS dates; RMSE, MAE, two benchmark-relative $R^2$s, correlation, directional accuracy, cumulative squared-error gains |
-| Confirmation | Static development-only `locked_holdout`; optional separately labelled `recursive_deployment` |
+| Confirmation | Static development-only model in `locked_holdout`; causal z-score moments continue updating; optional separately labelled `recursive_deployment` |
 | Robustness | Declared matrix only; VIX cut 20; 1% move cutoff fixed from development |
 | Scope | Forecasting first; no options trading backtest yet |
 
 Any departure from this table must be labelled post-hoc with its date, reason, affected results and original-protocol comparison.
+
+### Protocol amendment — 2026-10-01
+
+Before any forecasting or holdout performance was evaluated, the locked-confirmation z-score rule was corrected. The original wording froze its reference mean and standard deviation at 2024-12-31; the revised rule keeps the same expanding, past-only calculation in 2025, using earlier observed surface states. This preserves one feature definition across both periods without using 2025 outcomes or changing the fitted model. No forecast results are affected yet; any later comparison to the original fixed-reference rule must be labelled post-hoc.

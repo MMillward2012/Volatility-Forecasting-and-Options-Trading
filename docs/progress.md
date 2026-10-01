@@ -564,9 +564,10 @@ the preceding guarded results. Coverage recovery across failed fits is tested sy
   start/end values are required; intermediate missing observations do not invalidate an
   endpoint-to-endpoint target. The final $h$ dates have missing targets. No values are filled.
 
-The primary target is the 5-session change in 30D–60D skew spread. The 5-session change in
-30D skew is the secondary benchmark, and the 5-session 30D–60D RR25 spread change is the
-tradability check. The 1- and 10-session versions are robustness horizons.
+The two headline 5-session targets are the change in 30D skew (statistical) and the
+change in the 30D–60D skew spread (relative value). The 5-session 30D–60D RR25 spread
+change is a tradability robustness check; 1- and 10-session versions are robustness
+horizons. See [Forecasting protocol](forecasts.md) for the frozen experiment.
 
 ### Tests
 
@@ -610,6 +611,18 @@ session calendar.
 missing-SPX-date handling, VIX ticker identity, exact-date SPX/VIX alignment without VIX filling, CSV loading,
 and preservation of surface dates when warm-up-only rows are merged.
 
+## `src/forecasting.py`
+
+### Implemented
+
+- Splits development (2023–2024) and confirmation (2025) dates without altering source rows.
+- Builds the development dataset on every SPX session, with QC-masked states and five-session targets; labels whose endpoint falls in 2025 remain unavailable.
+- Calculates the two headline states' z-scores from 60 prior valid observations and produces expanding, five-session-purged M0 persistence, M1 historical-mean, and M2 mean-reversion forecasts. Confirmation forecasting and richer models are not implemented yet.
+
+### Tests
+
+`tests/test_forecasting.py` checks date splitting, past-only z-scores, the 2024/2025 target boundary, missing sessions, matured-label purging, and exclusion of confirmation dates from development forecasts.
+
 ## `notebooks/skew_time_series_analysis.ipynb`
 
 ### Implemented
@@ -618,9 +631,8 @@ Uses `build_daily_time_series(...)` to plot skew levels, daily changes, and skew
 structure; summarizes level/change distributions; reports lag 1–10 autocorrelation and
 paired counts; compares tenor correlations; checks contemporaneous 30D skew / ATM IV and
 skew / RR25 relationships; and reports QC coverage by metric and tenor. It contains no
-forecasting model. The saved notebook outputs currently show a partial 73-date sample
-through 2023-04-18; rerun the notebook after the historical pipeline completes to refresh
-the results from the full CSV.
+forecasting model. Its saved outputs cover all 667 quote dates from 2023-01-03 through
+2025-08-29.
 
 ## Test suite
 
@@ -636,6 +648,7 @@ The current test suite covers:
 - Synthetic global SSVI parameter and expiry ATM-variance recovery.
 - Call-put matching and key validation.
 - QC-aware daily time-series construction and fixed 1/5/10-session forward targets.
+- Leakage-safe development M0–M2 forecasts and temporal boundaries.
 - SPX/VIX market-state returns, rolling realized volatility, and date alignment.
 
 Run the suite with:
