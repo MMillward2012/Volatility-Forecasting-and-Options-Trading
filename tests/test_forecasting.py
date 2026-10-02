@@ -4,6 +4,7 @@ import pytest
 from sklearn.pipeline import Pipeline
 
 import src.forecasting as forecasting
+from src.time_series import add_forward_targets
 from src.forecasting import (
     BOOSTING_GRID,
     ELASTIC_NET_GRID,
@@ -11,15 +12,22 @@ from src.forecasting import (
     INNER_BLOCK_SIZE,
     MIN_INNER_TRAIN,
     add_development_zscores,
+    add_locked_zscores,
     build_development_dataset,
     build_linear_development_dataset,
+    build_locked_feature_panel,
+    build_locked_outcomes,
+    cumulative_locked_gains,
+    fit_locked_models,
     forecast_development,
     forecast_linear_development,
+    forecast_locked_holdout,
     forecast_ml_development,
     inner_validation_blocks,
     linear_feature_sets,
     score_development_forecasts,
     score_linear_development_forecasts,
+    score_locked_holdout,
     score_ml_development_forecasts,
     split_forecast_dates,
 )
@@ -572,3 +580,284 @@ def test_ml_scoring_uses_strict_common_dates_and_both_r2_benchmarks():
     m6 = summary.set_index("model").loc["m6_elastic_net"]
     assert m6.r2_vs_persistence == pytest.approx(0.8)
     assert m6.r2_vs_mean_reversion == pytest.approx(0.5)
+
+
+def locked_synthetic():
+    """Entirely synthetic SPX-session history; never reads historical extracts."""
+    dates = pd.bdate_range("2023-01-03", "2025-08-29")
+    steps = np.arange(len(dates), dtype=float)
+    metrics = []
+    for index, date in enumerate(dates):
+        for tenor, amplitude, frequency in ((30, 0.04, 0.061), (60, 0.025, 0.047), (90, 0.015, 0.033)):
+            metrics.append({
+                "quote_date": date,
+                "target_days": tenor,
+                "atm_skew_slope": 0.35 - tenor / 1000 + 0.0001 * index
+                + amplitude * np.sin(frequency * index + tenor / 100),
+                "slope_valid": True,
+                "rr25_downside": 0.2 + 0.01 * np.cos(0.05 * index + tenor / 100),
+                "rr25_valid": True,
+                "atm_iv": 0.15 + tenor / 2000 + 0.01 * np.sin(0.03 * index),
+                "atm_valid": True,
+            })
+    prices = spx_prices(dates)
+    prices["close"] = 4000 * np.exp(0.0001 * steps + 0.005 * np.sin(0.07 * steps))
+    vix = pd.DataFrame({"ticker": "VIX", "date": dates, "close": 20 + 2 * np.sin(0.04 * steps)})
+    panel = build_locked_feature_panel(pd.DataFrame(metrics), prices, vix)
+    dataset = add_forward_targets(panel, prices)
+    return panel, dataset, prices
+
+
+def test_locked_feature_panel_has_no_outcomes_or_calendar_compression():
+    panel, _, prices = locked_synthetic()
+    assert panel.quote_date.tolist() == pd.bdate_range("2023-01-03", "2025-08-29").tolist()
+    assert panel.session_index.tolist() == list(range(len(panel)))
+    assert not any(column.startswith("y_") for column in panel)
+
+    dates = prices.date
+    metrics = metric_rows(dates)
+    missing_date = pd.Timestamp("2025-02-05")
+    metrics = metrics.loc[metrics.quote_date.ne(missing_date)]
+    vix = pd.DataFrame({"ticker": "VIX", "date": dates, "close": 20.0})
+    vix = vix.loc[vix.date.ne(missing_date)]
+    with_gap = build_locked_feature_panel(metrics, prices, vix)
+    position = with_gap.index[with_gap.quote_date.eq(missing_date)][0]
+    assert pd.isna(with_gap.loc[position, "skew_30"])
+    assert pd.isna(with_gap.loc[position, "vix_close"])
+    assert pd.isna(with_gap.loc[position + 1, "d_skew_30"])
+    assert with_gap.loc[position + 1, "vix_close"] == 20.0
+
+
+def test_locked_zscores_use_prior_states_and_continue_causally():
+    panel, _, _ = locked_synthetic()
+    development = panel.loc[panel.quote_date.le(forecasting.DEV_END)]
+    expected = add_development_zscores(development)
+    actual = add_locked_zscores(panel)
+    pd.testing.assert_series_equal(actual.loc[development.index, "z_skew_30"], expected["z_skew_30"])
+
+    origin = panel.index[panel.quote_date.eq(pd.Timestamp("2025-03-20"))][0]
+    prior = panel.loc[:origin - 1, "skew_30"]
+    assert actual.loc[origin, "z_skew_30"] == pytest.approx(
+        (panel.loc[origin, "skew_30"] - prior.mean()) / prior.std(ddof=1)
+    )
+    earlier = panel.copy()
+    earlier.loc[origin - 20, "skew_30"] += 0.1
+    assert add_locked_zscores(earlier).loc[origin, "z_skew_30"] != pytest.approx(
+        actual.loc[origin, "z_skew_30"]
+    )
+    future = panel.copy()
+    future.loc[origin + 1, "skew_30"] += 100
+    assert add_locked_zscores(future).loc[origin, "z_skew_30"] == pytest.approx(
+        actual.loc[origin, "z_skew_30"]
+    )
+    current = panel.copy()
+    current.loc[origin, "skew_30"] += 0.1
+    changed = add_locked_zscores(current)
+    assert changed.loc[origin, "z_skew_30"] - actual.loc[origin, "z_skew_30"] == pytest.approx(
+        0.1 / prior.std(ddof=1)
+    )
+
+
+def test_final_locked_fit_ignores_2025_and_unmatured_2024_targets():
+    _, dataset, prices = locked_synthetic()
+    fitted = fit_locked_models(dataset, prices)
+    last_dev = dataset.index[dataset.quote_date.eq(forecasting.DEV_END)][0]
+    assert fitted["last_matured_origin"] == dataset.loc[last_dev - 5, "quote_date"]
+    assert fitted["m6_features"] == linear_feature_sets("y_skew_30_5d")["m5b_vix_state"]
+    assert (fitted["m6_alpha"], fitted["m6_l1_ratio"]) in ELASTIC_NET_GRID
+    assert set(fitted["m6_inner_rmse"]) == set(ELASTIC_NET_GRID)
+    assert fitted["m6_inner_blocks"] == inner_validation_blocks(last_dev)
+
+    changed = dataset.copy()
+    changed.loc[last_dev - 4:, ["y_skew_30_5d", "y_skew_spread_5d"]] = 1_000_000
+    changed.loc[changed.quote_date.gt(forecasting.DEV_END), [
+        "skew_30", "skew_30_60", "vix_close",
+    ]] = 1_000_000
+    future_prices = prices.copy()
+    future_prices.loc[future_prices.date.gt(forecasting.DEV_END), "close"] = -1
+    same = fit_locked_models(changed, future_prices)
+    assert (same["m6_alpha"], same["m6_l1_ratio"]) == (
+        fitted["m6_alpha"], fitted["m6_l1_ratio"]
+    )
+    assert same["m6_inner_rmse"] == fitted["m6_inner_rmse"]
+    np.testing.assert_array_equal(same["m6_model"][0].mean_, fitted["m6_model"][0].mean_)
+    np.testing.assert_array_equal(same["m6_model"][-1].coef_, fitted["m6_model"][-1].coef_)
+    assert same["m2_coefficients"] == fitted["m2_coefficients"]
+
+    dev = add_development_zscores(dataset.loc[:last_dev].copy())
+    dev["d_skew_30"] = dev.skew_30.diff()
+    matrix = dev[list(fitted["m6_features"])].to_numpy(dtype=float)
+    valid = np.isfinite(matrix[:last_dev - 4]).all(axis=1) & np.isfinite(
+        dev.loc[:last_dev - 5, "y_skew_30_5d"]
+    )
+    np.testing.assert_allclose(fitted["m6_model"][0].mean_, matrix[:last_dev - 4][valid].mean(axis=0))
+    assert fitted["m6_n_train"] == valid.sum()
+
+
+def test_final_locked_m2_uses_exact_matured_development_rows():
+    _, dataset, prices = locked_synthetic()
+    fitted = fit_locked_models(dataset, prices)
+    last_dev = dataset.index[dataset.quote_date.eq(forecasting.DEV_END)][0]
+    dev = add_development_zscores(dataset.loc[:last_dev].copy())
+    for target, (_, zscore) in forecasting.TARGET_STATES.items():
+        eligible = dev.iloc[:last_dev - 4][[target, zscore]].dropna()
+        beta = np.linalg.lstsq(
+            np.column_stack((np.ones(len(eligible)), eligible[zscore])),
+            eligible[target], rcond=None,
+        )[0]
+        coefficients = fitted["m2_coefficients"][target]
+        assert coefficients["n_train"] == len(eligible)
+        assert coefficients["intercept"] == pytest.approx(beta[0])
+        assert coefficients["slope"] == pytest.approx(beta[1])
+
+
+def test_final_m6_selection_uses_purged_chronological_blocks(monkeypatch):
+    _, dataset, prices = locked_synthetic()
+    dataset["vix_close"] = np.arange(len(dataset), dtype=float)
+    fit_calls = []
+    original_fit = forecasting._fit_ml_model
+
+    def record_fit(model, candidate, x_train, y_train):
+        fit_calls.append((candidate, int(x_train[:, -1].max())))
+        return original_fit(model, candidate, x_train, y_train)
+
+    monkeypatch.setattr(forecasting, "_fit_ml_model", record_fit)
+    fitted = fit_locked_models(dataset, prices)
+    last_dev = dataset.index[dataset.quote_date.eq(forecasting.DEV_END)][0]
+    first, second = inner_validation_blocks(last_dev)
+    assert len(fit_calls) == 2 * len(ELASTIC_NET_GRID) + 1
+    for candidate, first_fit, second_fit in zip(ELASTIC_NET_GRID, fit_calls[::2], fit_calls[1::2]):
+        assert first_fit == (candidate, first[0] - 5)
+        assert second_fit == (candidate, second[0] - 5)
+    assert fit_calls[-1][1] == last_dev - 5
+    assert fitted["m6_inner_blocks"] == (first, second)
+    assert forecasting._select_candidate("m6_elastic_net", fitted["m6_inner_rmse"]) == (
+        fitted["m6_alpha"], fitted["m6_l1_ratio"]
+    )
+
+
+def test_final_m6_selection_tie_uses_frozen_stronger_regularisation(monkeypatch):
+    _, dataset, prices = locked_synthetic()
+
+    class ConstantModel:
+        def predict(self, matrix):
+            return np.zeros(len(matrix))
+
+    monkeypatch.setattr(forecasting, "_fit_ml_model", lambda *args: ConstantModel())
+    fitted = fit_locked_models(dataset, prices)
+    assert len(set(fitted["m6_inner_rmse"].values())) == 1
+    assert (fitted["m6_alpha"], fitted["m6_l1_ratio"]) == (1e-2, 0.75)
+
+
+def test_locked_predictions_need_no_outcomes_and_keep_models_frozen():
+    panel, dataset, prices = locked_synthetic()
+    fitted = fit_locked_models(dataset, prices)
+    scaler_mean = fitted["m6_model"][0].mean_.copy()
+    coefficients = fitted["m6_model"][-1].coef_.copy()
+    m2 = {target: values.copy() for target, values in fitted["m2_coefficients"].items()}
+    original = forecast_locked_holdout(fitted, panel.drop(columns=[
+        "z_skew_30", "z_skew_30_60", "d_skew_30", "d_skew_30_60",
+    ]), prices)
+    with_targets = panel.copy()
+    with_targets[["y_skew_30_5d", "y_skew_spread_5d"]] = 1_000_000
+    same = forecast_locked_holdout(fitted, with_targets, prices)
+    for target in original:
+        pd.testing.assert_frame_equal(original[target], same[target])
+        assert original[target].quote_date.min() > forecasting.DEV_END
+        assert original[target].quote_date.max() == forecasting.HOLDOUT_END
+    np.testing.assert_array_equal(fitted["m6_model"][0].mean_, scaler_mean)
+    np.testing.assert_array_equal(fitted["m6_model"][-1].coef_, coefficients)
+    assert fitted["m2_coefficients"] == m2
+
+    origin = 10
+    future = panel.copy()
+    future.loc[future.quote_date.gt(original["y_skew_30_5d"].loc[origin, "quote_date"]), [
+        "skew_30", "skew_30_60", "vix_close",
+    ]] = 999
+    future_predictions = forecast_locked_holdout(fitted, future, prices)
+    for target in original:
+        pd.testing.assert_frame_equal(
+            original[target].iloc[:origin + 1], future_predictions[target].iloc[:origin + 1]
+        )
+
+
+def test_locked_predictions_abstain_on_missing_surface_or_vix_without_filling():
+    panel, dataset, prices = locked_synthetic()
+    fitted = fit_locked_models(dataset, prices)
+    holdout_start = panel.index[panel.quote_date.gt(forecasting.DEV_END)][0]
+    changed = panel.copy()
+    changed.loc[holdout_start + 3, "vix_close"] = np.nan
+    changed.loc[holdout_start + 4, "skew_60"] = np.nan
+    changed.loc[holdout_start + 5, "skew_30"] = np.nan
+    predictions = forecast_locked_holdout(fitted, changed, prices)
+    outright = predictions["y_skew_30_5d"]
+    assert pd.isna(outright.loc[3, "m6_elastic_net"])
+    assert np.isfinite(outright.loc[3, "m2_mean_reversion"])
+    assert np.isfinite(outright.loc[4, "m2_mean_reversion"])
+    assert pd.isna(outright.loc[4, "m6_elastic_net"])
+    assert outright.loc[5, ["m0_persistence", "m2_mean_reversion", "m6_elastic_net"]].isna().all()
+    assert pd.isna(outright.loc[6, "m6_elastic_net"])
+
+    dropped = panel.drop(index=holdout_start + 3)
+    with pytest.raises(ValueError, match="every SPX session"):
+        forecast_locked_holdout(fitted, dropped, prices)
+
+
+def test_locked_outcomes_have_exact_five_session_endpoints_and_unavailable_tail():
+    panel, _, prices = locked_synthetic()
+    outcomes = build_locked_outcomes(panel, prices)
+    first = panel.index[panel.quote_date.gt(forecasting.DEV_END)][0]
+    assert outcomes.loc[0, "y_skew_30_5d"] == pytest.approx(
+        panel.loc[first + 5, "skew_30"] - panel.loc[first, "skew_30"]
+    )
+    assert outcomes.tail(5)[["y_skew_30_5d", "y_skew_spread_5d"]].isna().all().all()
+    missing = panel.drop(index=first + 2)
+    with pytest.raises(ValueError, match="every 2025 SPX session"):
+        build_locked_outcomes(missing, prices)
+
+
+def test_locked_fit_and_forecast_require_full_frozen_session_history():
+    panel, dataset, prices = locked_synthetic()
+    fitted = fit_locked_models(dataset, prices)
+    shortened_prices = prices.iloc[1:].reset_index(drop=True)
+    shortened_data = dataset.iloc[1:].reset_index(drop=True)
+    shortened_data["session_index"] = np.arange(len(shortened_data))
+    with pytest.raises(ValueError, match="every SPX session"):
+        fit_locked_models(shortened_data, shortened_prices)
+    shortened_panel = panel.iloc[1:].reset_index(drop=True)
+    shortened_panel["session_index"] = np.arange(len(shortened_panel))
+    with pytest.raises(ValueError, match="every SPX session"):
+        forecast_locked_holdout(fitted, shortened_panel, shortened_prices)
+
+
+def test_locked_scoring_uses_common_dates_and_correct_benchmarks():
+    dates = pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"])
+    predictions = pd.DataFrame({
+        "quote_date": dates,
+        "m0_persistence": [0.0, 0.0, 0.0],
+        "m2_mean_reversion": [1.0, 0.0, 0.0],
+        "m6_elastic_net": [2.0, -1.0, np.nan],
+    })
+    outcomes = pd.DataFrame({
+        "quote_date": dates,
+        "y_skew_30_5d": [2.0, -1.0, 3.0],
+        "y_skew_spread_5d": [2.0, -1.0, np.nan],
+    })
+    summary, common = score_locked_holdout(predictions, outcomes, "y_skew_30_5d")
+    assert common.quote_date.tolist() == dates[:2].tolist()
+    assert summary.n_common.eq(2).all()
+    m2 = summary.set_index("model").loc["m2_mean_reversion"]
+    m6 = summary.set_index("model").loc["m6_elastic_net"]
+    assert m2.r2_vs_persistence == pytest.approx(0.6)
+    assert m6.r2_vs_persistence == pytest.approx(1.0)
+    assert m6.r2_vs_mean_reversion == pytest.approx(1.0)
+    assert pd.isna(summary.set_index("model").loc["m0_persistence", "correlation"])
+    gains = cumulative_locked_gains(common, "y_skew_30_5d")
+    assert gains.iloc[-1][["m2_vs_m0", "m6_vs_m0", "m6_vs_m2"]].tolist() == pytest.approx([3, 5, 2])
+
+    spread_summary, spread_common = score_locked_holdout(predictions, outcomes, "y_skew_spread_5d")
+    assert spread_summary.model.tolist() == ["m0_persistence", "m2_mean_reversion"]
+    assert len(spread_common) == 2
+    assert cumulative_locked_gains(spread_common, "y_skew_spread_5d").columns.tolist() == [
+        "quote_date", "m2_vs_m0",
+    ]

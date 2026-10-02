@@ -512,3 +512,297 @@ def score_ml_development_forecasts(forecasts):
             ),
         })
     return pd.DataFrame(summary), common
+
+
+def add_locked_zscores(rows):
+    """Extend the frozen past-only z-score calculation across confirmation dates."""
+    result = rows.copy()
+    dates = pd.to_datetime(result["quote_date"], errors="raise")
+    if dates.isna().any() or dates.duplicated().any() or not dates.is_monotonic_increasing:
+        raise ValueError("Quote dates must be unique, present and sorted.")
+    if not dates.between(DEV_START, HOLDOUT_END).all():
+        raise ValueError("Z-score dates must be in the frozen sample.")
+
+    for state, zscore in TARGET_STATES.values():
+        values = pd.to_numeric(result[state], errors="coerce")
+        values = values.where(np.isfinite(values))
+        history = values.shift(1).expanding(min_periods=ZSCORE_WARMUP)
+        mean = history.mean()
+        std = history.std(ddof=1)
+        result[zscore] = ((values - mean) / std).where(std > 0)
+    return result
+
+
+def build_locked_feature_panel(metrics, spx_prices, vix_prices):
+    """Build causal features on every 2023–2025 SPX session, without targets."""
+    metric_dates = pd.to_datetime(metrics["quote_date"], errors="raise")
+    spx_dates = pd.to_datetime(spx_prices["date"], errors="raise")
+    vix_dates = pd.to_datetime(vix_prices["date"], errors="raise")
+    if metric_dates.isna().any() or spx_dates.isna().any() or vix_dates.isna().any():
+        raise ValueError("Input dates cannot be missing.")
+
+    spx = spx_prices.loc[spx_dates <= HOLDOUT_END]
+    vix = vix_prices.loc[vix_dates <= HOLDOUT_END]
+    calendar = spx_trading_dates(spx)
+    dates = calendar[(calendar >= DEV_START) & (calendar <= HOLDOUT_END)]
+    if dates.empty or dates[0] != DEV_START or dates[-1] != HOLDOUT_END:
+        raise ValueError("SPX prices must cover the full frozen sample.")
+
+    selected_metrics = metrics.loc[metric_dates.between(DEV_START, HOLDOUT_END)]
+    daily = build_daily_time_series(selected_metrics, spx)
+    daily = daily.set_index("quote_date").reindex(dates)
+    daily.index.name = "quote_date"
+    features = daily.reset_index()
+    features.insert(1, "session_index", np.arange(len(features)))
+    features = add_locked_zscores(features)
+    features["d_skew_30"] = features["skew_30"].diff()
+    features["d_skew_30_60"] = features["skew_30_60"].diff()
+
+    market = build_market_state(spx, vix)[["date", *REALIZED_FEATURES, "vix_close"]]
+    return merge_market_state(features, market)
+
+
+def fit_locked_models(dataset, spx_prices):
+    """Select and fit final M6/M2 models using matured development labels only."""
+    required = {"quote_date", "session_index", "skew_30", "skew_30_60", *TARGET_STATES}
+    missing = required - set(dataset.columns)
+    if missing:
+        raise ValueError(f"Missing development columns: {sorted(missing)}")
+    dates = pd.to_datetime(dataset["quote_date"], errors="raise")
+    if dates.isna().any() or dates.duplicated().any() or not dates.is_monotonic_increasing:
+        raise ValueError("Forecast dates must be unique, present and sorted.")
+    if not dates.between(DEV_START, HOLDOUT_END).all():
+        raise ValueError("Rows must stay inside the frozen sample.")
+
+    development = dataset.loc[dates <= DEV_END].copy().reset_index(drop=True)
+    spx_dates = pd.to_datetime(spx_prices["date"], errors="raise")
+    if spx_dates.isna().any():
+        raise ValueError("SPX dates cannot be missing.")
+    calendar = spx_trading_dates(spx_prices.loc[spx_dates <= DEV_END])
+    expected = calendar[(calendar >= DEV_START) & (calendar <= DEV_END)]
+    if expected.empty or expected[0] != DEV_START or expected[-1] != DEV_END or not pd.DatetimeIndex(
+        development["quote_date"]
+    ).equals(expected):
+        raise ValueError("Development rows must cover every SPX session through 2024-12-31.")
+    if not np.array_equal(development["session_index"], np.arange(len(development))):
+        raise ValueError("Development session_index cannot compress the SPX calendar.")
+
+    development = add_development_zscores(development)
+    development["d_skew_30"] = development["skew_30"].diff()
+    development["d_skew_30_60"] = development["skew_30_60"].diff()
+    feature_names = linear_feature_sets("y_skew_30_5d")["m5b_vix_state"]
+    missing = set(feature_names) - set(development.columns)
+    if missing:
+        raise ValueError(f"Missing M6 features: {sorted(missing)}")
+
+    matrix = np.column_stack([
+        pd.to_numeric(development[name], errors="coerce").to_numpy(dtype=float)
+        for name in feature_names
+    ])
+    y_30 = pd.to_numeric(development["y_skew_30_5d"], errors="coerce").to_numpy(dtype=float)
+    complete = np.isfinite(matrix).all(axis=1) & np.isfinite(y_30)
+    last_origin = len(development) - 1
+    matured_end = last_origin - HORIZON + 1
+    blocks = inner_validation_blocks(last_origin)
+    if blocks is None or complete[:blocks[0][0] - HORIZON + 1].sum() < MIN_INNER_TRAIN:
+        raise ValueError("Insufficient development history for frozen M6 validation.")
+
+    fold_data = []
+    for start, stop in blocks:
+        train = np.flatnonzero(complete[:start - HORIZON + 1])
+        validation = np.flatnonzero(complete[start:stop]) + start
+        if not len(train) or not len(validation):
+            raise ValueError("Both frozen inner-validation blocks need complete labels.")
+        fold_data.append((train, validation))
+
+    candidate_rmse = {}
+    for candidate in ELASTIC_NET_GRID:
+        squared_error = 0.0
+        count = 0
+        for train, validation in fold_data:
+            fitted = _fit_ml_model("m6_elastic_net", candidate, matrix[train], y_30[train])
+            squared_error += float(np.square(y_30[validation] - fitted.predict(matrix[validation])).sum())
+            count += len(validation)
+        candidate_rmse[candidate] = float(np.sqrt(squared_error / count))
+    selected = _select_candidate("m6_elastic_net", candidate_rmse)
+    final_train = np.flatnonzero(complete[:matured_end])
+    m6 = _fit_ml_model("m6_elastic_net", selected, matrix[final_train], y_30[final_train])
+
+    m2 = {}
+    for target, (_, zscore) in TARGET_STATES.items():
+        outcome = pd.to_numeric(development[target], errors="coerce").to_numpy(dtype=float)
+        z = pd.to_numeric(development[zscore], errors="coerce").to_numpy(dtype=float)
+        valid = np.isfinite(outcome[:matured_end]) & np.isfinite(z[:matured_end])
+        x, y = z[:matured_end][valid], outcome[:matured_end][valid]
+        if len(y) < 2 or np.ptp(x) == 0:
+            raise ValueError(f"Insufficient development observations for {target} M2.")
+        intercept, slope = np.linalg.lstsq(
+            np.column_stack((np.ones(len(x)), x)), y, rcond=None
+        )[0]
+        m2[target] = {"intercept": float(intercept), "slope": float(slope), "n_train": len(y)}
+
+    return {
+        "m6_model": m6,
+        "m6_features": feature_names,
+        "m6_alpha": selected[0],
+        "m6_l1_ratio": selected[1],
+        "m6_inner_rmse": candidate_rmse,
+        "m6_inner_blocks": blocks,
+        "m6_n_train": len(final_train),
+        "m2_coefficients": m2,
+        "last_matured_origin": development["quote_date"].iloc[matured_end - 1],
+    }
+
+
+def forecast_locked_holdout(fitted, feature_panel, spx_prices):
+    """Predict 2025 from frozen models and causal features; no outcomes required."""
+    required = {"quote_date", "session_index", "skew_30", "skew_30_60", *fitted["m6_features"]}
+    missing = required - set(feature_panel.columns)
+    # Z-scores and one-session changes are recalculated below, not trusted as inputs.
+    missing -= {"z_skew_30", "d_skew_30"}
+    if missing:
+        raise ValueError(f"Missing locked feature columns: {sorted(missing)}")
+    dates = pd.to_datetime(feature_panel["quote_date"], errors="raise")
+    if dates.isna().any() or dates.duplicated().any() or not dates.is_monotonic_increasing:
+        raise ValueError("Feature dates must be unique, present and sorted.")
+    calendar = spx_trading_dates(spx_prices)
+    expected = calendar[(calendar >= DEV_START) & (calendar <= HOLDOUT_END)]
+    if (expected.empty or expected[0] != DEV_START or expected[-1] != HOLDOUT_END
+            or not pd.DatetimeIndex(dates).equals(expected)):
+        raise ValueError("Features must include every SPX session through 2025-08-29.")
+    if not np.array_equal(feature_panel["session_index"], np.arange(len(feature_panel))):
+        raise ValueError("Feature session_index cannot compress the SPX calendar.")
+
+    rows = add_locked_zscores(feature_panel)
+    rows["d_skew_30"] = rows["skew_30"].diff()
+    rows["d_skew_30_60"] = rows["skew_30_60"].diff()
+    holdout = rows.loc[dates > DEV_END].copy()
+    matrix = np.column_stack([
+        pd.to_numeric(holdout[name], errors="coerce").to_numpy(dtype=float)
+        for name in fitted["m6_features"]
+    ])
+    predictions = {}
+    for target, (state, zscore) in TARGET_STATES.items():
+        prediction = holdout[["quote_date", "session_index"]].copy()
+        valid_state = np.isfinite(pd.to_numeric(holdout[state], errors="coerce"))
+        valid_z = np.isfinite(pd.to_numeric(holdout[zscore], errors="coerce"))
+        coefficients = fitted["m2_coefficients"][target]
+        prediction["m0_persistence"] = np.where(valid_state, 0.0, np.nan)
+        prediction["m2_mean_reversion"] = np.where(
+            valid_state & valid_z,
+            coefficients["intercept"] + coefficients["slope"] * holdout[zscore],
+            np.nan,
+        )
+        if target == "y_skew_30_5d":
+            prediction["m6_elastic_net"] = np.nan
+            valid_m6 = np.isfinite(matrix).all(axis=1)
+            prediction.loc[valid_m6, "m6_elastic_net"] = fitted["m6_model"].predict(
+                matrix[valid_m6]
+            )
+        predictions[target] = prediction.reset_index(drop=True)
+    return predictions
+
+
+def build_locked_outcomes(feature_panel, spx_prices):
+    """Construct confirmation labels separately from the prediction API."""
+    dates = pd.to_datetime(feature_panel["quote_date"], errors="raise")
+    if dates.isna().any() or dates.duplicated().any():
+        raise ValueError("Feature dates must be unique and present.")
+    holdout = feature_panel.loc[dates.between(DEV_END + pd.Timedelta(days=1), HOLDOUT_END)]
+    calendar = spx_trading_dates(spx_prices)
+    expected = calendar[(calendar > DEV_END) & (calendar <= HOLDOUT_END)]
+    if not pd.DatetimeIndex(holdout["quote_date"]).equals(expected):
+        raise ValueError("Outcome rows must preserve every 2025 SPX session.")
+    targets = add_forward_targets(
+        holdout[["quote_date", "skew_30", "skew_30_60", "rr25_30_60"]], spx_prices
+    )
+    return targets[["quote_date", "y_skew_30_5d", "y_skew_spread_5d"]]
+
+
+def score_locked_holdout(predictions, outcomes, target):
+    """Score frozen predictions only when separately supplied outcomes are available."""
+    if target not in TARGET_STATES:
+        raise ValueError(f"Unsupported headline target: {target}")
+    models = ("m0_persistence", "m2_mean_reversion")
+    if target == "y_skew_30_5d":
+        models += ("m6_elastic_net",)
+    required = {"quote_date", *models}
+    if required - set(predictions.columns) or {"quote_date", target} - set(outcomes.columns):
+        raise ValueError("Missing locked prediction or outcome columns.")
+    dates = pd.to_datetime(predictions["quote_date"], errors="raise")
+    outcome_dates = pd.to_datetime(outcomes["quote_date"], errors="raise")
+    if (dates.isna().any() or dates.duplicated().any()
+            or outcome_dates.isna().any() or outcome_dates.duplicated().any()
+            or not dates.between(DEV_END + pd.Timedelta(days=1), HOLDOUT_END).all()
+            or not outcome_dates.between(DEV_END + pd.Timedelta(days=1), HOLDOUT_END).all()):
+        raise ValueError("Scoring requires unique locked-confirmation dates.")
+    prediction_rows = predictions.copy()
+    outcome_rows = outcomes[["quote_date", target]].copy()
+    prediction_rows["quote_date"] = dates
+    outcome_rows["quote_date"] = outcome_dates
+    merged = prediction_rows.merge(
+        outcome_rows, on="quote_date", how="left",
+        validate="one_to_one", indicator=True,
+    )
+    if merged["_merge"].ne("both").any():
+        raise ValueError("Every prediction date needs a corresponding outcome row.")
+    common = merged.drop(columns="_merge").rename(columns={target: "actual"})
+    for column in ("actual", *models):
+        values = pd.to_numeric(common[column], errors="coerce")
+        common[column] = values.where(np.isfinite(values))
+    common = common.dropna(subset=["actual", *models]).sort_values("quote_date")
+    if common.empty:
+        raise ValueError("No common realised locked-confirmation dates.")
+
+    actual = common["actual"].to_numpy()
+    m0_sse = float(np.square(actual - common["m0_persistence"].to_numpy()).sum())
+    m2_sse = float(np.square(actual - common["m2_mean_reversion"].to_numpy()).sum())
+    summary = []
+    for model in models:
+        prediction = common[model].to_numpy()
+        errors = actual - prediction
+        sse = float(np.square(errors).sum())
+        correlation = np.nan
+        if np.std(prediction) > 0 and np.std(actual) > 0:
+            correlation = float(np.corrcoef(prediction, actual)[0, 1])
+        summary.append({
+            "model": model,
+            "n_common": len(common),
+            "first_date": common["quote_date"].iloc[0],
+            "last_date": common["quote_date"].iloc[-1],
+            "rmse": float(np.sqrt(np.mean(np.square(errors)))),
+            "mae": float(np.mean(np.abs(errors))),
+            "correlation": correlation,
+            "directional_accuracy": (
+                float(np.mean(np.sign(prediction) == np.sign(actual)))
+                if model != "m0_persistence" else np.nan
+            ),
+            "r2_vs_persistence": 1 - sse / m0_sse if m0_sse > 0 else np.nan,
+            "r2_vs_mean_reversion": (
+                1 - sse / m2_sse
+                if model == "m6_elastic_net" and m2_sse > 0 else np.nan
+            ),
+        })
+    return pd.DataFrame(summary), common
+
+
+def cumulative_locked_gains(common, target):
+    """Return the pre-specified cumulative squared-error comparisons."""
+    if target not in TARGET_STATES:
+        raise ValueError(f"Unsupported headline target: {target}")
+    required = {"quote_date", "actual", "m0_persistence", "m2_mean_reversion"}
+    if target == "y_skew_30_5d":
+        required.add("m6_elastic_net")
+    missing = required - set(common.columns)
+    if missing:
+        raise ValueError(f"Missing common-date columns: {sorted(missing)}")
+    actual = common["actual"]
+    m0_error = (actual - common["m0_persistence"]) ** 2
+    m2_error = (actual - common["m2_mean_reversion"]) ** 2
+    gains = common[["quote_date"]].copy()
+    gains["m2_vs_m0"] = (m0_error - m2_error).cumsum()
+    if target == "y_skew_30_5d":
+        m6_error = (actual - common["m6_elastic_net"]) ** 2
+        gains["m6_vs_m0"] = (m0_error - m6_error).cumsum()
+        gains["m6_vs_m2"] = (m2_error - m6_error).cumsum()
+    return gains
