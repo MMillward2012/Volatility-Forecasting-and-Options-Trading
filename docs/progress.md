@@ -623,7 +623,7 @@ and preservation of surface dates when warm-up-only rows are merged.
 - Scores M0–M7 on one strict common set of realised development dates, including $R^2$ versus persistence and M2 where applicable.
 - The development selections are frozen: M6 elastic net for `y_skew_30_5d` and M2 mean reversion for `y_skew_spread_5d`. `fit_locked_models(...)` selects M6 hyperparameters with the final two purged development-only validation blocks, then fits M6 and both M2 benchmarks on labels matured by 2024-12-31. The scaler, coefficients, and selected hyperparameters are retained for static confirmation forecasts.
 - `build_locked_feature_panel(...)` constructs causal, target-free features on the complete SPX session calendar. Past-only z-score moments continue updating from observed surface states during 2025. `forecast_locked_holdout(...)` uses the frozen fits without accepting outcome columns; separate `build_locked_outcomes(...)`, `score_locked_holdout(...)`, and `cumulative_locked_gains(...)` prepare later evaluation. No recursive refitting is implemented.
-- The 2025 period is a locked temporal confirmation sample, not a perfectly pristine unseen holdout: earlier full-sample descriptive EDA included it. **Real 2025 forecast performance has not yet been evaluated.**
+- The 2025 period is a locked temporal confirmation sample, not a perfectly pristine unseen holdout: earlier full-sample descriptive EDA included it. The frozen models were evaluated once in `notebooks/forecast_locked_2025.ipynb`; no recursive refitting or post-result retuning was performed.
 
 ### Tests
 
@@ -641,7 +641,17 @@ The executed baseline notebook preserves the original M0–M2 development checkp
 
 The executed development notebook retains the previous M0–M5b checkpoint and separately compares M0–M7 on 238 strict common 2024 origins per target. It reports coverage, cumulative and quarterly squared-error gains, all five non-overlapping offsets, and M6/M7 hyperparameter-selection frequencies. Per-origin candidate scores and selections are saved under gitignored `data/processed/forecast_ml_selection_dev_2023_2024.csv`. M6/M7 each issued 243 forecasts per target; seven origins lacked current required features. No 2025 forecast was made.
 
-For 30D outright skew change, M2 RMSE/MAE are 0.0987/0.0752. M6 gives 0.0968/0.0742 and $R^2$ versus M2 of 0.0389. Its gain is positive in three of four quarters and four of five non-overlapping offsets. M7 gives RMSE 0.0964 but MAE 0.0754; most of its net gain is concentrated in Q3. Under the frozen rule, M6 is the provisional development choice for this target, with a modest improvement that still needs locked confirmation. For the 30D–60D spread, M2 RMSE/MAE are 0.0524/0.0404; M6 gives 0.0545/0.0419 and M7 gives 0.0543/0.0417, so M2 remains the development choice. These overlapping-target comparisons are descriptive, not iid significance claims or trading results.
+For 30D outright skew change, M2 RMSE/MAE are 0.0987/0.0752. M6 gives 0.0968/0.0742 and $R^2$ versus M2 of 0.0389. Its gain is positive in three of four quarters and four of five non-overlapping offsets. M7 gives RMSE 0.0964 but MAE 0.0754; most of its net gain is concentrated in Q3. Under the frozen rule, M6 was selected for locked confirmation. For the 30D–60D spread, M2 RMSE/MAE are 0.0524/0.0404; M6 gives 0.0545/0.0419 and M7 gives 0.0543/0.0417, so M2 was selected. These overlapping-target development comparisons are descriptive, not iid significance claims or trading results.
+
+## `notebooks/forecast_locked_2025.ipynb`
+
+### Frozen confirmation result
+
+The notebook was executed once after the full test suite passed. It fits the selected models using only development labels matured by 2024-12-31, then makes static 2025 predictions before constructing outcomes. The final M6 choice from the frozen two-block validation is `alpha=0.01`, `l1_ratio=0.25`; final M2 coefficients are intercept 0.007266 and slope -0.040897 for 30D skew, and intercept 0.004940 and slope -0.027615 for the 30D–60D spread.
+
+There are 165 SPX confirmation sessions (2025-01-02 through 2025-08-29) and 158 common scored dates per target (through 2025-08-22). On the 30D target, persistence, frozen M2, and selected M6 have RMSEs 0.1012, 0.0922, and 0.1081; M6 has $R^2$ of -0.3731 versus M2 and **does not confirm incremental value**. On the spread target, persistence and frozen M2 have RMSEs 0.0544 and 0.0492; M2 has $R^2$ of 0.1824 versus persistence and **does confirm improvement on that benchmark**. The notebook retains the complete MAE, correlation, directional-accuracy and $R^2$ tables and cumulative squared-error gain plots.
+
+No missing values were filled: M6 issued 163 of 165 outright forecasts, the spread state was unavailable on one session, and the final five sessions lack within-sample five-session outcomes. These are overlapping-target descriptive results, not iid significance evidence or a trading backtest. No model was changed or rerun after viewing confirmation performance.
 
 ## `notebooks/skew_time_series_analysis.ipynb`
 
