@@ -177,6 +177,19 @@ def extreme_move_check(common, development_cutoff):
             "removed": len(common) - len(retained), **_pair_statistics(retained)}
 
 
+def confirmation_top_one_percent_check(common):
+    """Remove exactly the largest 1% of realised confirmation moves for diagnosis."""
+    if len(common) < 2 or common["quote_date"].isna().any() or common["quote_date"].duplicated().any():
+        raise ValueError("The confirmation sample needs at least two unique, dated rows.")
+    k = max(1, int(np.ceil(0.01 * len(common))))
+    ranked = common.assign(_absolute_move=common["actual"].abs()).sort_values(
+        ["_absolute_move", "quote_date"], ascending=[False, True], kind="mergesort"
+    )
+    removed_dates = ranked["quote_date"].iloc[:k]
+    retained = common.loc[~common["quote_date"].isin(removed_dates)]
+    return {"removed": k, "removed_dates": tuple(removed_dates), **_pair_statistics(retained)}
+
+
 def vix_regime_check(common, panel):
     """Describe existing predictions below/at-or-above VIX 20; never refit."""
     prices = panel[["quote_date", "vix_close"]]

@@ -1,5 +1,7 @@
 # Project progress
 
+This is a chronological research record; earlier "next step" and snapshot statements describe their stage of the project. For the completed v1 outcome, see the forecasting sections below and the README. The frozen protocol remains in `docs/forecasts.md`.
+
 ## `src/pricing.py`
 
 ### Implemented
@@ -661,7 +663,7 @@ This executed notebook holds the frozen 5D headline result fixed and tests only 
 
 For outright 30D skew, M2-versus-persistence 2025 OOS $R^2$ is 0.037 at 1D (164 dates), 0.169 at 5D (158), and 0.288 at 10D (155). For the 30D–60D skew spread it is 0.106 (162), 0.182 (158), and 0.317 (153). All six development M2 slopes are negative. The 5D RR25-spread check is also positive, with 155 dates and OOS $R^2$ of 0.225. These are different horizons/outcomes and not a post-hoc replacement for the 5D headline.
 
-M2 improves on M0 in all five fixed, original-session-index 5D offsets for both headline targets. A 99th-percentile absolute-move cutoff fixed from eligible development labels removes 5 outright and 1 spread confirmation observations; the remaining OOS $R^2$s are 0.255 and 0.204. The cutoff is not re-estimated from 2025. VIX-regime results qualify the breadth of the finding: below 20 (109 dates), OOS $R^2$ is only 0.005 outright and 0.023 spread; at or above 20 (49 dates), it is 0.254 and 0.296. These are unchanged predictions split descriptively, not regime-specific models.
+M2 improves on M0 in all five fixed, original-session-index 5D offsets for both headline targets. The **development-fixed extreme-move threshold** (99th percentile of eligible development absolute changes) removes 5 outright and 1 spread confirmation observations; the remaining OOS $R^2$s are 0.255 and 0.204. Separately, the **confirmation top-1%-removed diagnostic** ranks each target's 158 realised confirmation changes by absolute size, breaks ties by earliest quote date, and removes exactly 2 observations. On the remaining 156 dates, outright M0/M2 RMSEs are 0.094375/0.087088, MAEs 0.070273/0.063124, and OOS $R^2$ 0.148469; spread RMSEs are 0.051507/0.046976, MAEs 0.040562/0.035778, and OOS $R^2$ 0.168198. This second, outcome-based trim is post-confirmation analysis, not an untouched test; neither trim changes the headline result. VIX-regime results qualify the breadth of the finding: below 20 (109 dates), OOS $R^2$ is only 0.005 outright and 0.023 spread; at or above 20 (49 dates), it is 0.254 and 0.296. These are unchanged predictions split descriptively, not regime-specific models.
 
 For the overlapping 5D loss differential $e^2_{M0}-e^2_{M2}$, fixed-lag-4 Newey–West mean/SE/95% intervals are $0.001736/0.001451/[-0.001109,0.004580]$ outright and $0.000540/0.000457/[-0.000356,0.001437]$ spread. Both intervals include zero; the finite confirmation sample does not establish a precise positive mean loss gain. The saved notebook includes all score tables, offset/extreme/regime diagnostics, and cumulative M2-versus-M0 plots. The frozen headline finding and failed M6 confirmation remain unchanged; no trading backtest was run.
 

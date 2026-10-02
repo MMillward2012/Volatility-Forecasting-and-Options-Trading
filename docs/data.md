@@ -152,7 +152,7 @@ For the **2025-08-29** snapshot:
 | Previous screen plus midpoint at least 0.25 | 6,466 | 506 |
 | Selected positive-spread screen (`use_for_fit`) | 6,550 | 559 |
 
-The selected screen removes 48 locked quotes from the previous sample while retaining 84 observations rejected by the premium-floor alternative. All 38 positive-DTE expiries retain both calls and puts. The notebook reports per-expiry coverage. `src/ssvi.py` applies the same screen by default for exploratory surface fitting; the SSVI notebook also compares a fit to all 7,426 valid OTM IVs without that screen. The 50% spread cutoff remains provisional and has not been checked across multiple quote dates.
+The selected screen removes 48 locked quotes from the previous sample while retaining 84 observations rejected by the premium-floor alternative. All 38 positive-DTE expiries retain both calls and puts. The notebook reports per-expiry coverage. `src/ssvi.py` applies the same screen by default for exploratory surface fitting; the SSVI notebook also compares a fit to all 7,426 valid OTM IVs without that screen. The 50% spread cutoff was selected on this snapshot and subsequently used in the historical Raw SVI pipeline; it has not been optimised or proven preferable across dates.
 
 ## Current caveats
 

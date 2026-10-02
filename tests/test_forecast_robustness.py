@@ -5,6 +5,7 @@ import pytest
 from src.forecast_robustness import (
     HAC_LAG,
     build_robustness_outcomes,
+    confirmation_top_one_percent_check,
     cumulative_m2_gain,
     extreme_move_check,
     fit_static_m2,
@@ -170,6 +171,26 @@ def test_offsets_use_original_session_indices_and_fixed_extreme_cutoff():
     assert trimmed["removed"] == 2
     assert trimmed["n"] == 8
     assert trimmed["development_cutoff"] == 8.5
+
+
+def test_confirmation_top_one_percent_removes_exact_k_with_date_tie_break():
+    dates = pd.bdate_range("2025-01-02", periods=158)
+    common = pd.DataFrame({
+        "quote_date": dates,
+        "actual": np.r_[np.ones(155), -10., 10., -10.],
+        "m0_persistence": 0.,
+        "m2_mean_reversion": .5,
+    }).sample(frac=1, random_state=17).reset_index(drop=True)
+    result = confirmation_top_one_percent_check(common)
+    assert result["removed"] == 2
+    assert result["n"] == 156
+    assert result["removed_dates"] == (dates[155], dates[156])
+    expected = common.loc[~common.quote_date.isin(result["removed_dates"])]
+    assert result["rmse_m0"] == pytest.approx(np.sqrt(np.square(expected.actual).mean()))
+    assert result["mae_m2"] == pytest.approx(np.abs(expected.actual - .5).mean())
+    assert result["r2_vs_m0"] == pytest.approx(
+        1 - np.square(expected.actual - .5).sum() / np.square(expected.actual).sum()
+    )
 
 
 def test_vix_regimes_reuse_predictions_without_refit(monkeypatch):
