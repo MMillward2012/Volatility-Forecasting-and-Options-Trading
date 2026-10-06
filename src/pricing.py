@@ -76,3 +76,24 @@ def black_scholes_put_price(forward, strike, discount_factor, time_to_expiry, vo
     put_price = discount_factor * (strike * norm.cdf(-d2) - forward * norm.cdf(-d1))
 
     return put_price
+
+
+def black_scholes_greeks(forward, strike, discount_factor, time_to_expiry,
+                        volatility, option_type, spot):
+    """Return signed forward delta, spot delta and vega in quote-price units."""
+    forward, strike, discount_factor, time_to_expiry, volatility = _validate_pricing_inputs(
+        forward, strike, discount_factor, time_to_expiry, volatility
+    )
+    spot = _validate_positive_finite("spot", spot)
+    option_type = np.asarray(option_type)
+    if not np.isin(option_type, ["call", "put"]).all():
+        raise ValueError("option_type must contain only call or put")
+    d1 = (np.log(forward / strike) + 0.5 * volatility**2 * time_to_expiry) / (
+        volatility * np.sqrt(time_to_expiry)
+    )
+    forward_delta = norm.cdf(d1) - (option_type == "put")
+    return {
+        "forward_delta": forward_delta,
+        "spot_delta": discount_factor * forward / spot * forward_delta,
+        "vega": discount_factor * forward * norm.pdf(d1) * np.sqrt(time_to_expiry),
+    }

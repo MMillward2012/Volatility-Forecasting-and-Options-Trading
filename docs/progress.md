@@ -8,6 +8,7 @@ This is a chronological research record; earlier "next step" and snapshot statem
 
 - `black_scholes_call_price(...)` prices a European call using the Black formula.
 - `black_scholes_put_price(...)` prices the corresponding European put.
+- `black_scholes_greeks(...)` adds signed unadjusted forward delta, carry-adjusted SPX spot delta, and vega using the same Black inputs; existing price functions are unchanged.
 - Inputs are converted to finite, strictly positive NumPy values.
 
 ### Mathematical logic
@@ -30,7 +31,7 @@ $$
 
 ### Tests
 
-`tests/test_pricing.py` covers call-put parity, call-price monotonicity with respect to strike, and rejection of non-positive or non-finite inputs.
+`tests/test_pricing.py` covers call-put parity, call-price monotonicity with respect to strike, and rejection of non-positive or non-finite inputs. `tests/test_trade_selection.py` checks the new Greeks against pricing finite differences and the existing RR25 forward-delta convention.
 
 ## `src/forward.py`
 
@@ -678,6 +679,31 @@ skew / RR25 relationships; and reports QC coverage by metric and tenor. It conta
 forecasting model. Its saved outputs cover all 667 quote dates from 2023-01-03 through
 2025-08-29.
 
+## Listed-option trading translation (mechanics only)
+
+### Frozen protocol
+
+`docs/trading_protocol.md` freezes the existing RR25-spread M2 signal, next-session entry/original fifth-session exit, seven-calendar-day expiry tolerance, signed forward 25-delta wings with 0.05 tolerance, equal wing vega/unit gross entry vega, observed bid/ask execution, fixed contract identities, one-session common-basket exit fallback, and previous-close SPX hedge accounting. It was written before inspecting any 2025 option selections or strategy P&L. Forecasting results were already known: this is a translation test, not a pristine new economic hypothesis. No forecasting specification or conclusion changes.
+
+### Implemented
+
+- `src/trade_selection.py` prepares PM quotes using existing cleaning, parity forward inference and IV inversion; selects the minimum-DTE-error expiry pair and closest eligible wings deterministically; constructs fixed fractional contract quantities with the 100 contract multiplier. It also fits the existing RR25 M2 once on development-matured labels and generates causal sign signals without accepting target outcomes.
+- `src/trade_backtest.py` separates quote-only lifecycle checks from bid/ask and hedge accounting. It retains the same four contracts, liquidates the basket on one common date, earns each interval's hedge P&L from the previous EOD hedge, then sets the next hedge. Missing daily hedge inputs or SPX closes are explicit failures, never stale-value fills. Accounting has been run only on synthetic tests.
+- `src/trading_feasibility.py` streams the explicit 2023 and 2024 annual files, retains the authoritative SPX session index and selected-contract availability flags, and never calls real-data P&L accounting. Boundary entries are reported separately. Position statistics use a canonical positive direction independently of forecast availability, not simulated development trades.
+- Greeks distinguish RR25 forward delta from the carry-adjusted SPX hedge delta. Vega is per decimal volatility, quantities are fractional theoretical contracts, and the index hedge is frictionless with zero financing in v1; no fully executable futures/integer-order or trading-profitability claim is made.
+
+### Tests
+
+`tests/test_trade_selection.py`, `tests/test_trade_backtest.py` and `tests/test_trading_feasibility.py` cover expiry-pair minimisation/order/tolerances, delta conventions and distance limits, invalid quotes, future-information isolation, RR direction and unit gross vega, development-only static signal fitting, exact session offsets, all execution sides, fixed quantities/identities, basket exit fallback, previous-close hedge ordering/turnover, missing-mark failures, uncompressed missing sessions, and development-only feasibility guards. The feasibility tests forbid invoking the P&L function. No 2025 raw chain or actual strategy P&L has been evaluated.
+
+### Development-only feasibility
+
+The executed `notebooks/trading_feasibility.ipynb` checks all 502 SPX sessions from 2023-01-03 through 2024-12-31, streaming 10,659,814 raw rows (7,268,276 PM rows). Expiry pairs exist on 492 sessions (98.01%); all four wings on 481 (95.82%). Ten sessions lack an eligible pair; eleven fail a wing's 0.05 distance limit (ten 30D calls, one 60D call). No tolerance was relaxed. Pairwise median/95th-percentile absolute DTE errors are 0/1 days for 30D and 3/7 days for 60D. Across all nearest-wing candidates, median/95th-percentile delta distance is 0.002077/0.019276; failed candidates remain visible in the table.
+
+The 1,924 selected options have median/95th-percentile quoted width of 0.40/0.90 SPX points and relative width of 1.395%/2.667%. The whole PM chain contains 377,894 zero-bid rows and two invalid/crossed rows; none is an executable entry. Candidate/held IV and forward estimation failures are zero. Every available basket has gross entry vega one and net entry vega zero to rounding. Canonical-positive-direction median absolute SPX hedge size is 0.000082 per unit gross vega; fractional quantities and zero-cost hedge assumptions remain explicit.
+
+Six selected entry dates are lifecycle-boundary observations (no within-sample origin, or exit/fallback outside development). All 475 eligible baskets, comprising 1,900 fixed contract legs, have valid executable quotes through the scheduled exit and complete daily hedge inputs. All exit on schedule; fallback and unevaluable rates are zero. Examples are the first valid entry of each calendar quarter. This is adequate mechanical coverage under the frozen rules, not trading-performance evidence. The protocol and machinery are ready for a separately authorised locked 2025 trading run; **2025 option-chain selections and trading P&L have not been evaluated**, and no real-data strategy P&L was computed in development either.
+
 ## Test suite
 
 The current test suite covers:
@@ -694,6 +720,7 @@ The current test suite covers:
 - QC-aware daily time-series construction and fixed 1/5/10-session forward targets.
 - Leakage-safe development M0–M7 forecasts, purged inner CV, temporal boundaries, and common-date scoring.
 - SPX/VIX market-state returns, rolling realized volatility, and date alignment.
+- Deterministic listed-option selection, static RR25 signals, synthetic bid/ask and delta-hedge accounting, and development-only lifecycle coverage.
 
 Run the suite with:
 
