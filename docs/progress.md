@@ -714,6 +714,53 @@ This is the pre-result evaluator checkpoint: **no real 2025 option-chain selecti
 
 The full pre-result suite passes: **280 tests**, with one existing joblib core-detection warning. A synthetic missing-session test exposed object-typed empty marks; the runner now preserves numeric quote/Greek columns so missing hedge inputs remain an explicit unevaluable outcome rather than a dtype exception. No selection, accounting or signal rule changed.
 
+## Locked listed-options trading result — Phase B
+
+`notebooks/trading_locked_2025.ipynb` records the single frozen 2025 translation run, executed on 2026-10-06 after evaluator/protocol commit **`59c02d73dc9134dcb157d4f2fbf06adf0d5db22c`** was pushed. The exclusive manifest records one completed attempt (18:06:52–18:12:43 UTC). No evaluator, selection, hedge or signal rule was changed after opening the result. Forecasting conclusions remain unchanged; no alternative strategy, threshold, regime rule, offset selection or model retuning was run.
+
+The static RR25-spread M2 uses 426 development-matured observations, with intercept 0.0006537436 and slope -0.001725306. Its last eligible development origin is 2024-12-23; coefficients remain fixed throughout 2025 while the predeclared causal z-score evolves.
+
+### Coverage
+
+The authoritative calendar contains 165 confirmation sessions (2025-01-02–2025-08-29), 160 origins with a full exit horizon, and 162 finite/nonzero signals across all origins. There are 157 reachable signal-driven entries, 155 eligible expiry pairs and 149 four-wing baskets. All **149 trades exit on schedule**; fallback and unevaluable counts are zero. The 16 skipped origins comprise five without a complete horizon, three without a signal, two without an eligible expiry pair and six without all required 25-delta wings. No losing trade was retrospectively excluded.
+
+The stream contains 4,066,473 raw rows. Across the 164 sessions requiring chain preparation, 2,686,110 PM rows include 90,365 zero-bid and 23 invalid quote rows; executable selection follows the unchanged quote rules. Candidate/held-contract IV failures and expiry forward-estimation failures are zero. All selected baskets have unit gross entry vega, fixed identities and complete daily SPX/hedge-input coverage.
+
+### Frozen primary result
+
+All amounts below are P&L per unit of entry gross vega **per decimal volatility**, not capital returns. Pooled all-origin totals overlap and are descriptive.
+
+| Component / statistic | Value |
+| --- | ---: |
+| Midpoint option P&L | -0.308779 |
+| Execution drag | -0.166395 |
+| Executable option P&L | -0.475174 |
+| SPX hedge P&L | +0.279227 |
+| Executable total P&L | **-0.195946** |
+| Midpoint total P&L | -0.029551 |
+| Mean / median executable total per trade | -0.001315 / -0.000660 |
+| Sample standard deviation | 0.003636 |
+| Positive executable-total fraction | 22.15% |
+| Executable / midpoint maximum drawdown | 0.196249 / 0.073934 |
+
+The positive hedge contribution offsets part of the negative option component; it does not make either the executable or midpoint total positive. Bid/ask therefore compounds an already-negative midpoint delta-hedged result rather than merely removing a positive forecast-directed trading gain.
+
+### All five original offsets and controls
+
+| Offset | Trades | Executable total | Midpoint total | Execution drag | Hedge total | Maximum drawdown |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 29 | -0.040466 | -0.007897 | -0.032568 | +0.117547 | 0.040466 |
+| 1 | 29 | -0.047619 | -0.013331 | -0.034288 | +0.118190 | 0.049243 |
+| 2 | 31 | -0.044529 | -0.006894 | -0.037635 | +0.064161 | 0.044832 |
+| 3 | 30 | -0.036954 | -0.010637 | -0.026316 | -0.007479 | 0.036954 |
+| 4 | 30 | -0.026378 | +0.009209 | -0.035587 | -0.013192 | 0.026378 |
+
+Every offset loses after bid/ask; none is selected or substituted. On exactly the same 149 origins/contracts, the reversed-sign control has executable/midpoint totals -0.136844/+0.029551 (mean -0.000918; positive fraction 12.08%), and the constant-positive control -0.087431/+0.078964 (mean -0.000587; positive fraction 26.85%). Both share execution drag -0.166395; their separately recalculated hedge totals are -0.279227 and +0.097172. The primary underperforms both controls; neither replaces it.
+
+The evidence **does not translate cleanly into positive listed-option delta-hedged P&L under the frozen test**, even at midpoint for the primary. This does not change the confirmed statistical forecast finding. There is no trading-profitability, capital-return, significance or institutional-execution claim: the SPX hedge is frictionless, financing/margin are omitted, quantities are fractional, the sample ends August 2025, and forecasting evidence preceded the trading hypothesis.
+
+The notebook preserves coverage, all component statistics, five equal-prominence offset curves, the pooled midpoint/executable comparison and the two predeclared controls. The noninteractive batch backend initially omitted figure displays; the identical predeclared plots were embedded from the completed saved trade audit **without rerunning fitting, selection or accounting**. Proprietary trade/leg/hedge audits and the one-run manifest remain gitignored under `data/processed/trading_locked_2025/`; committed outputs are aggregate only. Read-only audit checks confirm fixed identities/quantities, unit gross vega, original offsets, scheduled exits and P&L decomposition. The pre-result full suite remains 280 passing tests; no scientific implementation changed in Phase B.
+
 ## Test suite
 
 The current test suite covers:
