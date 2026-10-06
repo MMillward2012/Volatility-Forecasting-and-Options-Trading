@@ -1,3 +1,5 @@
+"""Exploratory SSVI comparator; production surfaces use Raw SVI/calendar repair."""
+
 import numpy as np
 import pandas as pd
 from scipy.optimize import least_squares

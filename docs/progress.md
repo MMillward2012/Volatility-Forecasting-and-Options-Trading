@@ -341,7 +341,7 @@ $$
 
 ### Validation and limitations
 
-The notebook has been run, and its cell outputs are saved in the notebook, including the filtered-sample summary, fitted parameters, and plots. The filtered sample uses the same provisional `use_for_fit` rules documented for the IV diagnostics notebook. The nearest-to-forward quote is currently used as the ATM proxy rather than interpolating $w(0)$. The fitted values are exploratory defaults for understanding parameter effects. The fit is not yet used by production code and has not been checked for static arbitrage or extended jointly across expiries.
+The calibration and plots were executed during exploratory development; quote-bearing outputs are now intentionally cleared from the public notebook. The optional manual slider cell is interactive, not a production prerequisite. The filtered sample uses the same provisional `use_for_fit` rules documented for the IV diagnostics notebook. The nearest-to-forward quote is used as the ATM proxy rather than interpolating $w(0)$. The fitted values are exploratory defaults for understanding parameter effects. Production uses Raw SVI plus calendar repair; this exploratory slice was not itself checked for static arbitrage or extended jointly across expiries.
 
 ## `src/ssvi.py`
 
@@ -464,7 +464,7 @@ The downside-skew slope is $-[\sigma(0.01)-\sigma(-0.01)]/0.02$. The downside 25
 
 ### Limitations
 
-The notebook has been run and includes a saved, rotatable Plotly surface output. This is an exploratory fit for one quote date. It does not establish absence of static arbitrage or stability across quote dates and screening choices.
+The notebook was executed with rotatable Plotly outputs during development. Those embedded observed-IV arrays and other quote-bearing outputs are now cleared for public distribution; sources remain runnable locally. This is an exploratory fit for one quote date. It does not establish absence of static arbitrage or stability across quote dates and screening choices.
 
 ## `src/data_cleaning.py`
 
@@ -679,7 +679,9 @@ skew / RR25 relationships; and reports QC coverage by metric and tenor. It conta
 forecasting model. Its saved outputs cover all 667 quote dates from 2023-01-03 through
 2025-08-29.
 
-## Listed-option trading translation (mechanics only)
+## Listed-option trading translation — original mechanics checkpoint
+
+This section records the development-only checkpoint before the locked trading evaluation. The subsequent Phase-B and post-result sections describe the current completed state.
 
 ### Frozen protocol
 
@@ -761,6 +763,33 @@ The evidence **does not translate cleanly into positive listed-option delta-hedg
 
 The notebook preserves coverage, all component statistics, five equal-prominence offset curves, the pooled midpoint/executable comparison and the two predeclared controls. The noninteractive batch backend initially omitted figure displays; the identical predeclared plots were embedded from the completed saved trade audit **without rerunning fitting, selection or accounting**. Proprietary trade/leg/hedge audits and the one-run manifest remain gitignored under `data/processed/trading_locked_2025/`; committed outputs are aggregate only. Read-only audit checks confirm fixed identities/quantities, unit gross vega, original offsets, scheduled exits and P&L decomposition. The pre-result full suite remains 280 passing tests; no scientific implementation changed in Phase B.
 
+## Post-result attribution and publication pass
+
+`src/trade_attribution.py` and the executed `notebooks/trading_attribution.ipynb` analyse the existing frozen positions without selecting contracts, refitting forecasts or running another strategy. The observed direction mix is 97 positive / 65 negative among 162 finite signals, 92 / 65 among 157 reachable entries, and **89 / 60 among 149 evaluated trades** (59.73% positive). The algebraic sign switch is $z=0.3789$; it is not a new threshold. The signal has a positive-direction bias but is not almost constant long.
+
+Exit inputs are reconstructed for the original contracts using the existing parity and IV functions. An endpoint repricing path changes time/discount, spot and forward basis, then splits the pair's log-IV change into geometric-mean level and relative wing shape. The two orders inside the IV block are averaged. This preserves positive counterfactual IVs and shares that interaction equally. It does not uniquely identify economic carry, causal skew P&L or the forecast's constant-tenor/constant-delta RR25 exposure.
+
+| Saved-position attribution component | Pooled total |
+| --- | ---: |
+| Time / discount | +0.004374 |
+| Spot repricing | -0.317355 |
+| Forward basis | +0.004966 |
+| Held-pair IV level | +0.000915 |
+| Held-wing shape | -0.001677 |
+| Actual SPX hedge | +0.279227 |
+| Bid/ask execution drag | -0.166395 |
+| Reconciled executable total | **-0.195946** |
+
+Spot repricing plus the actual hedge is -0.038128 under this ordering. Maximum per-trade reconciliation error is $2.02\times10^{-16}$; maximum endpoint repricing residual is $2.88\times10^{-13}$. The original midpoint/executable totals and controls are unchanged. Two executed trades have unavailable QC-approved RR25 forecasting endpoints (combined midpoint -0.013680, executable -0.023432); they remain in the P&L audit. This documents a forecasting-versus-trading coverage difference rather than retrospectively filtering positions.
+
+The README now covers the completed execution study and leads the forecasting discussion with 8.9%/9.6% RMSE reductions on 158 overlapping origins. The review's approximate independent-sample count and iid significance calculation are not adopted: effective sample size is not simply $158/5$, and executable-P&L standard deviation does not supply a valid midpoint-P&L standard error. The existing HAC uncertainty remains explicit. Horizon evidence does not rule out surface-estimation noise; no new split-sample surface experiment or trading design was run.
+
+SSVI code/notebooks are labelled exploratory and kept at their original paths. Saved quote-bearing outputs from five surface/quote notebooks and the contract-example output in the feasibility notebook are cleared; the latter now writes examples only to a gitignored CSV. `scripts/prepare_public_notebooks.py --check` enforces this targeted output policy. Historical Git objects still contain previously published outputs; no licence-compliance claim or history rewrite was made. Frozen forecast/trading result notebooks retain their original aggregate outputs.
+
+`requirements.txt` now lists pinned direct dependencies from the evaluated environment, with notebook tools explicit and transitive/macOS-only entries removed. Synthetic attribution tests isolate level, wing-shape, spot and time/discount changes; verify exact joint reconciliation, identity/coverage errors, input preservation, and direction denominators. No scientific definition in the frozen forecasting or trading evaluators changed.
+
+Validation: **288 tests passed**, with one existing joblib core-detection warning. `pip check` reports no broken requirements in the evaluated environment. The public-output check passes and notebook schemas validate; all observed-quote Plotly payloads have been removed from current notebook outputs. This is validation of the existing environment, not a newly installed environment.
+
 ## Test suite
 
 The current test suite covers:
@@ -778,6 +807,7 @@ The current test suite covers:
 - Leakage-safe development M0–M7 forecasts, purged inner CV, temporal boundaries, and common-date scoring.
 - SPX/VIX market-state returns, rolling realized volatility, and date alignment.
 - Deterministic listed-option selection, static RR25 signals, synthetic bid/ask and delta-hedge accounting, and development-only lifecycle coverage.
+- Saved-trade repricing attribution, component isolation, reconciliation and direction counts.
 
 Run the suite with:
 
