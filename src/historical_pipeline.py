@@ -211,7 +211,7 @@ def _apply_calendar_repair_guard(metrics, grid, diagnostics):
     return metrics
 
 
-def process_quote_date(raw_options, quote_date):
+def process_quote_date(raw_options, quote_date, retain_surface=False):
     """Return three metric rows and diagnostics; a failed date is an explicit result."""
     started = perf_counter()
     date = pd.Timestamp(quote_date).strftime("%Y-%m-%d")
@@ -230,6 +230,8 @@ def process_quote_date(raw_options, quote_date):
         "processing_status": "failed", "failure_stage": "", "failure_reason": "",
     }
     stage = "validation"
+    grid = None
+    forwards = None
     for days in TARGET_DAYS:
         for column in ["raw_atm_iv", "repaired_atm_iv", "calendar_adjustment_atm_iv"]:
             diagnostics[f"{days}d_{column}"] = np.nan
@@ -349,6 +351,9 @@ def process_quote_date(raw_options, quote_date):
         diagnostics[f"{prefix}_convexity_valid"] = bool(row["convexity_valid"])
     diagnostics["runtime_seconds"] = perf_counter() - started
     metrics["processing_status"] = diagnostics["processing_status"]
+    if retain_surface:
+        return metrics, diagnostics, {"quote_date": pd.Timestamp(date), "grid": grid,
+                                      "forwards": forwards, "metrics": metrics}
     return metrics, diagnostics
 
 

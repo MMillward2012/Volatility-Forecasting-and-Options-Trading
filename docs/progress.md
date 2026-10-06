@@ -790,6 +790,16 @@ SSVI code/notebooks are labelled exploratory and kept at their original paths. S
 
 Validation: **288 tests passed**, with one existing joblib core-detection warning. `pip check` reports no broken requirements in the evaluated environment. The public-output check passes and notebook schemas validate; all observed-quote Plotly payloads have been removed from current notebook outputs. This is validation of the existing environment, not a newly installed environment.
 
+## Constant-factor diagnostic — Phase A
+
+The separate `docs/surface_factor_protocol.md` freezes a **blinded post-result re-analysis**: 2025 has already been examined for forecasting, fixed-contract trading and attribution. `src/surface_factor_trade.py` reuses the audited RR25 M2 coefficients without fitting, measures the signed surface-factor change over $t+1\to t+5$, and implements a zero-cost daily-reset synthetic 30D/60D forward-25-delta RR portfolio. It retains the full-horizon and first-session contributions, original offsets, missing paths, cash/roll ledger and previous-close SPX hedge. Held options age by elapsed ACT/365 calendar days; replacements reset exact tenors, deltas and gross vega. No new model, predictor, threshold or forecast tuning is introduced.
+
+The historical pipeline has an optional `retain_surface=True` return of its existing grid/forwards/metrics; default return values and mathematical construction are unchanged. Synthetic repricing uses the same accepted maturity bracket, with linear forward/log-linear discount interpolation and the existing support/gap/repair guards. The protocol records the idealisation and differing factor-versus-option P&L units explicitly.
+
+The executed `notebooks/surface_factor_feasibility.ipynb` uses only 2023/2024 option files. Both QC-valid RR25 states exist on **496/502 development sessions** (30D: 500, 60D: 498). All eight mechanically selected first-valid-quarter examples provide valid synthetic wings and accounting checks. Maximum delta error is $4.99\times10^{-12}$; maximum gross-vega error is zero; absolute net vega is at most $2.78\times10^{-17}$; maximum cash/liquidation residual is $5.31\times10^{-17}$. RR-state reconstruction differs from the saved development states by at most $9.37\times10^{-17}$. No aggregate development profitability was inspected.
+
+Validation: **308 tests passed**, with the existing joblib core-detection warning. Twenty new synthetic cases cover delayed/full factor timing, missing endpoints, original offsets, unique delta roots, exact maturities, signs/vega, weekend ageing, self-financing roll and liquidation, prior-close hedging, support/gap/QC failures, future/outcome independence, unchanged default pipeline API, development-file restrictions and exclusive-run protection. The evaluator/protocol must be committed and pushed before its own new 2025 outputs are opened.
+
 ## Test suite
 
 The current test suite covers:
