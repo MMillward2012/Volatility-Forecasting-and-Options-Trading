@@ -63,3 +63,34 @@ Poor development expiry/delta coverage, widespread missing exits, or absent requ
 | Costs | Option bid/ask; frictionless index hedge and zero financing in v1 |
 | Offsets | All five original origin-session offsets; none selected |
 | Current scope | Synthetic accounting tests and development-only feasibility; no real strategy P&L |
+
+## Locked evaluation outputs and controls
+
+Appended 2026-10-06 before opening 2025 option-chain selections or trading P&L. Phase A freezes and tests the evaluator, then commits and pushes it; its commit hash is recorded in the locked notebook and local run manifest. Phase B opens the 2025-01-02–2025-08-29 result once. Unexpected technical failure stops the run: no evaluator/strategy edit or retry in that task. All preceding trading rules remain unchanged. Forecasting results were already known, so this remains a locked translation test, not a pristine new hypothesis.
+
+**Primary:** forecast-sign direction, actual option bid/ask, and the daily frictionless SPX hedge. On the same contracts and hedge path report
+
+$$
+\mathrm{executable\ total}=\mathrm{option\ P\&L}+\mathrm{hedge\ P\&L},
+\qquad
+\mathrm{midpoint\ total}=\mathrm{midpoint\ option\ P\&L}+\mathrm{hedge\ P\&L},
+$$
+$$
+\mathrm{execution\ drag}=\mathrm{option\ P\&L}-\mathrm{midpoint\ option\ P\&L}\leq0.
+$$
+
+Allow numerical tolerance $10^{-10}$ for the drag identity/sign check. Midpoint totals do not use a different hedge or contract selection.
+
+**Control A: reversed forecast sign.** Negate the primary quantities on exactly the same selected contracts and origins, and recalculate its own reversed-position delta hedge.
+
+**Control B: constant positive RR-spread direction.** On those same contracts and dates, always buy the 30D downside RR and sell the 60D downside RR, with the same absolute quantities/unit gross vega and its corresponding hedge. Neither control may replace the primary strategy, regardless of performance. No additional controls are permitted after results are viewed.
+
+Coverage comes first: all confirmation origins, finite/nonzero signals, origins with a full five-session horizon, entries reached/chain availability, eligible pairs, four-wing baskets, evaluated trades, scheduled/fallback exits, and skipped/unevaluable reasons. The final five origins cannot be evaluated. An origin with a scheduled exit on the final sample session remains eligible; if a fallback would require later data, mark it unevaluable rather than extending the sample. Never condition entry eligibility on future quotes or P&L.
+
+Retain the trade-level option, midpoint option, execution drag, hedge, executable total and midpoint total P&L, plus hedge turnover. Report each component's total, mean, median, sample standard deviation and positive-P&L fraction. For primary total P&L also report final cumulative P&L and maximum drawdown. Cumulate realised trade P&L by actual exit date (then origin as a deterministic tie-break), starting from zero; drawdown is the maximum running peak minus cumulative P&L in those same units, never a percentage return.
+
+Report all original origin `session_index % 5` offsets separately: count, executable total/mean/median/positive fraction, midpoint total, execution drag, hedge total, and maximum drawdown. These fixed offsets are the principal non-overlapping diagnostic; a delayed exit meets the next same-offset entry at the same close. Pooled all-origin statistics and cumulative plots are explicitly **overlapping and descriptive**, not independent observations or a constant-risk capital portfolio. No offset selection.
+
+Controls get only a compact comparison on exactly the primary evaluated origins: count, executable total and mean, positive fraction, midpoint total, execution drag and hedge total. The audit retains all attempted origins, failed/unevaluable cases, fixed option identities, entry/exit quotes, Greeks/quantities and each position's hedge path. Proprietary quote-level tables stay under gitignored `data/processed/`; committed notebook outputs contain aggregate statistics only.
+
+P&L is per unit of entry gross vega under the existing decimal-volatility convention. No capital denominator, annualised Sharpe, financing/margin model, hedge execution costs or integer-order implementation is introduced. No model refitting with 2025 outcomes, threshold, regime rule, magnitude sizing or parameter comparison. No post-result retuning or automatic retry. A local exclusive run manifest guards against accidentally executing the real-data notebook twice.

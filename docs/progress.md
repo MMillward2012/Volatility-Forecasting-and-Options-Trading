@@ -704,6 +704,16 @@ The 1,924 selected options have median/95th-percentile quoted width of 0.40/0.90
 
 Six selected entry dates are lifecycle-boundary observations (no within-sample origin, or exit/fallback outside development). All 475 eligible baskets, comprising 1,900 fixed contract legs, have valid executable quotes through the scheduled exit and complete daily hedge inputs. All exit on schedule; fallback and unevaluable rates are zero. Examples are the first valid entry of each calendar quarter. This is adequate mechanical coverage under the frozen rules, not trading-performance evidence. The protocol and machinery are ready for a separately authorised locked 2025 trading run; **2025 option-chain selections and trading P&L have not been evaluated**, and no real-data strategy P&L was computed in development either.
 
+## Locked trading evaluator — Phase A
+
+`src/trading_locked.py` adds the static RR25 signal/entry/lifecycle orchestration and the two predeclared controls: reversed forecast sign and constant positive RR-spread direction. It reuses the frozen selection and accounting functions unchanged. All variants retain identical entry contracts and evaluation dates; each recalculates its own hedge. The target-free execution API accepts signals, SPX prices and a chronological quote stream, never future target outcomes.
+
+The protocol appendix freezes coverage-first reporting, trade-level bid/ask/midpoint/hedge decomposition, all five original offsets, overlapping/descriptive pooled summaries, and drawdown from a zero starting balance ordered by actual exit. Quote-level trade/leg/hedge audit files and an exclusive one-run manifest belong under gitignored processed data. Unexpected technical failure stops rather than initiating a strategy change/retry. `tests/test_trading_locked.py` uses only deterministic synthetic data for timing, identity/quantity controls, hedge symmetry, leakage isolation, missing-data/boundary/fallback handling, common-origin statistics, uncompressed offsets, drawdown and one-run guards.
+
+This is the pre-result evaluator checkpoint: **no real 2025 option-chain selection or trading P&L has been opened during Phase A**. Existing forecasting results and trading mechanics remain unchanged. A separately recorded Phase-A Git commit precedes the real-data run.
+
+The full pre-result suite passes: **280 tests**, with one existing joblib core-detection warning. A synthetic missing-session test exposed object-typed empty marks; the runner now preserves numeric quote/Greek columns so missing hedge inputs remain an explicit unevaluable outcome rather than a dtype exception. No selection, accounting or signal rule changed.
+
 ## Test suite
 
 The current test suite covers:
