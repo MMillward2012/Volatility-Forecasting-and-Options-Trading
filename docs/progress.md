@@ -800,6 +800,65 @@ The executed `notebooks/surface_factor_feasibility.ipynb` uses only 2023/2024 op
 
 Validation: **308 tests passed**, with the existing joblib core-detection warning. Twenty new synthetic cases cover delayed/full factor timing, missing endpoints, original offsets, unique delta roots, exact maturities, signs/vega, weekend ageing, self-financing roll and liquidation, prior-close hedging, support/gap/QC failures, future/outcome independence, unchanged default pipeline API, development-file restrictions and exclusive-run protection. The evaluator/protocol must be committed and pushed before its own new 2025 outputs are opened.
 
+## Constant-factor diagnostic — Phase B
+
+The evaluator/protocol was committed and pushed at **`dbf234d136fd291063a79e385f83c08fbb6d367b`** before generating this experiment's 2025 outcomes. The single exclusive run subsequently completed on 2026-10-07, with its executed outputs saved in `notebooks/surface_factor_2025.ipynb`. Source code, tests and frozen protocols are unchanged from that checkpoint. This remains a **blinded post-result re-analysis**, not an unseen holdout or replacement confirmation result. No forecast was refitted, parameter changed or strategy rerun.
+
+### Coverage and direct-factor timing
+
+There are 165 original 2025 origins, 162 finite/nonzero signals and 160 origins with a complete fifth-session endpoint. Delayed QC-valid factor outcomes are available on 152 origins; full-horizon outcomes on 155. All 165 production surfaces were reconstructed. Synthetic entry baskets are available on 154 origins, with **145 completed paths**, nine subsequently unevaluable paths and 11 skipped origins. Skips comprise five incomplete horizons, three missing signals and three failed entry RR25 QC checks. Path failures comprise seven daily RR25 QC failures and two unsupported held-strike evaluations. They are retained as coverage outcomes, not silently removed or repaired.
+
+Direct outcomes are decimal IV-factor changes, **not option-dollar P&L**:
+
+| Signed factor interval | Native observations | Native cumulative change |
+| --- | ---: | ---: |
+| Delayed $t+1\to t+5$ | 152 | +0.012559 |
+| Full $t\to t+5$ | 155 | +0.116524 |
+| First session $t\to t+1$ | 154 | +0.099053 |
+
+On the **same 152 complete timing origins**, full-horizon change is +0.112606, comprising +0.100048 before entry and +0.012559 after entry. Thus **88.85% of net full-horizon signed gain occurs before the frozen executable-entry time**. Delayed mean/median are +0.000083/+0.000311, with a 51.97% positive fraction. This is a pooled overlapping descriptive total, not a capital return or significance claim.
+
+### Ideal daily-reset portfolio
+
+The model-mid, zero-cost synthetic construction is **not an executable trading result**. Its 145 completed paths have:
+
+| Component | Total | Mean | Median | Positive fraction |
+| --- | ---: | ---: | ---: | ---: |
+| Option only / unhedged | -0.222701 | -0.001536 | -0.001635 | 42.07% |
+| Previous-close SPX hedge | +0.220327 | +0.001519 | +0.001802 | 60.69% |
+| Delta-hedged model-mid | **-0.002374** | -0.000016 | +0.000114 | 55.86% |
+
+Amounts use the project's unit-gross-vega option/hedge accounting; gross vega resets daily. The option and hedge components largely offset, leaving a small negative total. Across the original offsets:
+
+| Offset | Factor observations | Delayed factor total | Synthetic paths | Delta-hedged model-mid total |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 28 | +0.018518 | 29 | -0.008332 |
+| 1 | 30 | +0.005669 | 29 | +0.005860 |
+| 2 | 32 | +0.005437 | 29 | +0.004658 |
+| 3 | 32 | -0.009686 | 29 | -0.005594 |
+| 4 | 30 | -0.007380 | 29 | +0.001034 |
+
+Both constructions have three positive and two negative offsets; neither supports a uniformly positive translation. All offsets are reported without selection.
+
+The predeclared sequential option attribution gives calendar ageing -0.007983, forward/discount repricing -0.211915 and held-strike IV repricing -0.002803. Adding the hedge +0.220327 recovers -0.002374. The previous-vega linear held-IV approximation is +0.007159; exact IV repricing differs by -0.009962. These finite repricing effects, ageing and residual forward/hedge exposure explain why a signed RR-factor change need not equal an option portfolio outcome. This ordering-dependent allocation does not uniquely identify causal gamma or carry.
+
+### Mapping comparison and limits
+
+Only after all new factor/portfolio outputs were saved did the notebook read the existing fixed-contract audit. Native totals are direct factor +0.012559 (152 origins), ideal delta-hedged model-mid -0.002374 (145), fixed listed midpoint -0.029551 (149), and fixed listed after bid/ask -0.195946 (149). Different availability and units prohibit treating these as an interchangeable performance ranking.
+
+On the **137 identical available origins**, the predeclared comparison is:
+
+| Mapping | Total | Units |
+| --- | ---: | --- |
+| Delayed surface factor | +0.022340 | Decimal IV-factor change |
+| Ideal daily-reset RR, delta hedged | +0.002535 | Unit-gross-vega model P&L |
+| Fixed listed RR at midpoint, delta hedged | +0.019728 | Unit-entry-gross-vega P&L |
+| Fixed listed RR after bid/ask, delta hedged | -0.096513 | Unit-entry-gross-vega P&L |
+
+Both option mappings have positive midpoint totals on that intersection; the daily-reset construction does **not** outperform fixed listed midpoint there. Bid/ask removes the listed-position gain on those common origins. This is a coverage diagnostic, not permission to discard other original trades or replace the frozen -0.195946 listed result. The evidence therefore does not isolate exposure drift as the sole lost edge: most signed factor gain precedes delayed entry, option carry/convexity effects remain, and availability materially changes totals. No tradability or profitability claim follows from the idealisation.
+
+Validation: the pre-result full suite passed **308 tests**, with one existing joblib core-detection warning. The executed notebook has no errors, validates against its schema and embeds the two predeclared figures. Maximum timing-identity, interval-accounting and terminal-cash residuals are $1.01\times10^{-16}$, $1.05\times10^{-16}$ and $2.00\times10^{-16}$ respectively. The exclusive manifest records a completed single run and its Phase-A hash. Proprietary surface/basket/interval audits remain gitignored under `data/processed/surface_factor_2025/`; committed outputs are aggregate only. Frozen forecasting and listed-trading findings are unchanged. No further strategy tuning follows this diagnostic.
+
 ## Test suite
 
 The current test suite covers:
@@ -818,6 +877,7 @@ The current test suite covers:
 - SPX/VIX market-state returns, rolling realized volatility, and date alignment.
 - Deterministic listed-option selection, static RR25 signals, synthetic bid/ask and delta-hedge accounting, and development-only lifecycle coverage.
 - Saved-trade repricing attribution, component isolation, reconciliation and direction counts.
+- Direct-factor timing and missing endpoints, synthetic daily-reset delta/vega, calendar ageing, self-financing roll/hedge accounting, causal construction and single-run protection.
 
 Run the suite with:
 
